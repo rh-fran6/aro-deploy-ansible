@@ -1,0 +1,59 @@
+---
+- block:
+    - name: Create Resource Groups for VNET and Subnets
+      azure.azcollection.azure_rm_resourcegroup:
+        name: "{{ vnet.network_rg }}"
+        location: "{{vnet.location }}"
+        state: present
+        tags: "{{ tags }}"
+    
+    - name: Create a VNET for ARO
+      azure.azcollection.azure_rm_virtualnetwork:
+        resource_group: "{{ vnet.network_rg }}"
+        name: "{{ cluster.name }}-vnet"
+        address_prefixes_cidr: "{{ vnet.address_cidr }}"
+        tags: "{{ tags }}"
+    
+    - name: Create a Control Plane Subnet
+      azure.azcollection.azure_rm_subnet:
+        resource_group: "{{ vnet.network_rg }}"
+        virtual_network_name: "{{ cluster.name }}-vnet"
+        name: "{{ cluster.name }}-control-subnet"
+        address_prefix_cidr: "{{ vnet.control_plane.address_cidr}}"
+        service_endpoints:
+          - service: "Microsoft.ContainerRegistry"
+        private_link_service_network_policies: Disabled
+      register: controlSubnet
+    
+    - name: Create a Worker Nodes Subnet
+      azure.azcollection.azure_rm_subnet:
+        resource_group: "{{ vnet.network_rg }}"
+        virtual_network_name: "{{ cluster.name }}-vnet"
+        name: "{{ cluster.name }}-worker-subnet"
+        address_prefix_cidr: "{{ vnet.worker_plane.address_cidr }}"
+        service_endpoints:
+          - service: "Microsoft.ContainerRegistry"
+      register: workerSubnet
+  when: vnet.create_network_resources | bool
+
+- name: Get Worker Subnet ID when not BYON
+  set_fact:
+    workerSubnetId: "{{ vnet.worker_plane.existing_worker_subnet_id }}"
+  when: not vnet.create_network_resources
+
+- name: Get Worker Subnet ID when BYON
+  set_fact:
+    workerSubnetId: "{{ vnet.worker_plane.existing_worker_subnet_id }}"
+  when: vnet.create_network_resources
+
+- name: Get Control Plane Subnet ID when not BYON
+  set_fact:
+    controlSubnetId: "{{ vnet.control_plane.existing_control_subnet_id }}"
+  when: not vnet.create_network_resources
+
+- name: Get Control Plane Subnet ID when BYON
+  set_fact:
+    controlSubnetId: "{{ vnet.control_plane.existing_control_subnet_id }}"
+  when: vnet.create_network_resources
+
+

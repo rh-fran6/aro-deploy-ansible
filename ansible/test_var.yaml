@@ -1,0 +1,76 @@
+
+## Cluster Secrets by Environments
+
+cluster_sp_id_key: clientId
+cluster_sp_secret_key: clientSecret
+cluster_tenant_id_key: tenantId
+cluster_subscription_id_key: subId
+pull_secret_akv_key: pullSecret
+
+
+## ARO Cluster Build Secrets
+
+
+tags:
+  createdBy: "test-user"
+
+
+vnet:
+  create_network_resources: false
+  location: eastus
+  network_rg: aro-cluster-network-rg
+  address_cidr: 10.0.0.0/22
+  control_plane: 
+    existing_control_subnet_id: /subscriptions/ee0bc28d-c3d4-4efa-a187-c959a251e5f2/resourceGroups/aro-cluster-network-rg/providers/Microsoft.Network/virtualNetworks/ansible-aro-cluster-vnet/subnets/ansible-aro-cluster-control-subnet
+    address_cidr: 10.0.0.0/23
+    create:  yes
+  worker_plane:
+    existing_worker_subnet_id: /subscriptions/ee0bc28d-c3d4-4efa-a187-c959a251e5f2/resourceGroups/aro-cluster-network-rg/providers/Microsoft.Network/virtualNetworks/ansible-aro-cluster-vnet/subnets/ansible-aro-cluster-worker-subnet
+    address_cidr: 10.0.2.0/23
+    create:
+
+
+cluster:
+  name: ansible-aro-cluster
+  cluster_resource_group:  ansible-aro-main 
+  cluster_profile_resource_group: cluster-profile-ansible-aro-main
+  location: eastus
+  domain: "mycluster.com"
+  ingress_visibility: Public
+  api_visibility: Public
+  pod_cidr: 10.0.64.0/18  ## 10.128.0.0/14
+  service_cidr: 172.32.0.0/16 ## 172.30.0.0/16
+  version: "4.14.16"
+  control_instance: "Standard_D8s_v3"
+  worker_disk: 128
+  worker_node_count: 3
+  worker_instance: "Standard_D8s_v3"
+  azurefilesRegion: eastus
+  azurefilesResourceGroup: azure-files-rg
+
+# <cluster-name>-rg
+
+
+
+
+mas_variables:
+  IBM_ENTITLEMENT_KEY: "xxx" ## Read from AKV
+  SLS_LICENSE_ID: "xxx"  ## Read from AKV
+  SLS_LICENSE_FILE: "/path/to/entitlement.lic"  ## Read from AKV
+
+  MAS_INSTANCE_ID: "inst1"
+  MAS_CONFIG_DIR: "~/masconfig"
+  UDS_CONTACT_EMAIL: "xxx@xxx.com"
+  UDS_CONTACT_FIRSTNAME: "xxx"
+  UDS_CONTACT_LASTNAME: "xxx"
+
+  OCP_INGRESS_TLS_SECRET_NAME: $(oc get secret -n openshift-ingress | grep '-ingress$$' | awk '{print $1}')
+
+# test.apps.masq.$domain.com
+# uat.apps.masq.$domain.com
+# prod.apps.masq.$domain.com
+
+
+
+
+
