@@ -21,6 +21,7 @@ virtualenv:
 	pip3 install openshift && \
 	ansible-galaxy collection install azure.azcollection && \
 	ansible-galaxy collection install community.general && \
+	ansible-galaxy collection install community.okd && \
 	ansible-galaxy collection install ibm.mas_devops && \
 	deactivate
 
@@ -31,4 +32,8 @@ deploy-cluster:
 deploy-mas:
 	source $(VIRTUALENV)/bin/activate && \
 	ansible-playbook ibm.mas_devops.oneclick_core
+
+delete-cluster:
+	source $(VIRTUALENV)/bin/activate && \
+	ansible-playbook ansible/delete-cluster.yaml
 

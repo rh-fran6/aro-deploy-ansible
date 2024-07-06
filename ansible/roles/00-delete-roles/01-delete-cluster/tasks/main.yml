@@ -1,0 +1,15 @@
+---
+- name: Delete OpenShift Managed Cluster
+  azure.azcollection.azure_rm_openshiftmanagedcluster:
+    resource_group: "{{ cluster.cluster_resource_group }}"
+    name: "{{ cluster.name }}"
+    location: "{{ cluster.location }}"
+    state: absent
+
+- name: Delete Cluster Resource Group
+  azure.azcollection.azure_rm_resourcegroup:
+    name: "{{ cluster.cluster_resource_group }}"
+    location: "{{cluster.location }}"
+    state: absent
+    force_delete_nonempty: true
+

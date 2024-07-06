@@ -1,0 +1,41 @@
+---
+- name: Delete a Control Plane Subnet
+  azure.azcollection.azure_rm_subnet:
+    resource_group: "{{ vnet.network_rg }}"
+    virtual_network_name: "{{ vnet.name }}"
+    name: "{{ vnet.control_plane.name }}"
+    state: absent
+    
+- name: Delete a Worker Nodes Subnet
+  azure.azcollection.azure_rm_subnet:
+    resource_group: "{{ vnet.network_rg }}"
+    virtual_network_name: "{{ vnet.name }}"
+    name: "{{ vnet.worker_plane.name }}"
+    state: absent
+    
+- name: Check if the cluster resource group exists
+  azure_rm_resource_info:
+    resource_group: "{{ vnet.network_rg }}"
+    resource_type: resources
+  register: az_resource
+
+- name: Log RG check
+  debug:
+    msg: "{{ az_resource | json_query('response[0].error.code') }}"
+
+- name: Delete a VNET for ARO
+  azure.azcollection.azure_rm_virtualnetwork:
+    resource_group: "{{ vnet.network_rg }}"
+    name: "{{ vnet.name }}"
+    state: absent
+  when: az_resource.response[0].error.code != 'ResourceGroupNotFound'
+
+- name: Delete Resource Groups for VNET and Subnets
+  azure.azcollection.azure_rm_resourcegroup:
+    name: "{{ vnet.network_rg }}"
+    location: "{{ vnet.location }}"
+    force_delete_nonempty: true
+    state: absent
+  when: az_resource.response[0].error.code != 'ResourceGroupNotFound'
+
+

@@ -1,0 +1,8 @@
+---
+- name: Cleanup Completion Message
+  debug:
+    msg: 
+      - "Cleanup of cluster {{ cluster.name }} completed!"
+
+
+

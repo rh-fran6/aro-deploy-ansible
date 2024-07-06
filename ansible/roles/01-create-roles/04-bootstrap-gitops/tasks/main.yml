@@ -1,0 +1,119 @@
+---
+
+- name: Read ARO API URL
+  command: az aro show --name {{ cluster.name }} --resource-group {{ cluster.cluster_resource_group }} -o tsv --query apiserverProfile.url
+  register: apiUrl
+
+- name: Read ARO Console URL
+  command: az aro show --name {{ cluster.name }} --resource-group {{ cluster.cluster_resource_group }} -o tsv --query consoleProfile.url
+  register: consoleUrl
+
+- name: Read ARO Username
+  command: az aro list-credentials --name {{ cluster.name }} --resource-group {{ cluster.cluster_resource_group }} -o tsv --query kubeadminUsername
+  register: userName
+
+- name: Read ARP Password
+  command: az aro list-credentials --name {{ cluster.name }} --resource-group {{ cluster.cluster_resource_group }} -o tsv --query kubeadminPassword
+  register: passWord
+
+- name: Not a part of the main plays. Include by updating user in common variable file.
+  block:
+    - name: debug
+      debug:
+        msg: 
+          - "ARP API URL: {{ apiUrl.stdout }}"
+          - "ARO Console: {{ consoleUrl.stdout }}"
+          - "ARO Login Username: {{ userName.stdout }}"
+          - "ARO Login Password: {{ passWord.stdout }}"
+
+    - name: Prepare local environment. Please Skip if this doesnt apply
+      copy:
+        content: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        mode: '0755'
+      no_log: true
+      with_items:
+        - { src: "oc login -u '{{ userName.stdout }}' -p '{{ passWord.stdout }}' '{{ apiUrl.stdout }}'", dest: "/opt/homebrew/bin/aro-login" }
+        - { src: "open -a 'Google Chrome.app' '{{ consoleUrl.stdout }}'", dest: "/opt/homebrew/bin/open-aro" }
+
+    - name: Write credentials to file for easy recall
+      copy:
+        content: |
+          Username: {{ userName.stdout }}
+          Password: {{ passWord.stdout }}
+        dest: /opt/homebrew/bin/aro-creds
+        mode: '0755'
+      no_log: true
+
+  when: ansible_facts['user_id'] == user
+
+- name: Bootstrap OpenShift GitOps
+  block:
+
+    - name: Log in to OpenShift (obtain access token)
+      community.okd.openshift_auth:
+        username: "{{ userName.stdout}}"
+        password: "{{ passWord.stdout }}"
+        host: "{{ apiUrl.stdout }}"
+      register: openshift_auth_results
+
+    - name: Create OpenShift GitOps Namespace
+      community.okd.k8s:
+        state: present
+        api_key: "{{ openshift_auth_results.openshift_auth.api_key }}"
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: openshift-gitops-operator
+            annotations:
+              openshift.io/display-name: "OpenShift GitOps Operator"
+            labels:
+              openshift.io/cluster-monitoring: 'true'
+
+    - name: Create OpenShift GitOps Operator Group
+      community.okd.k8s:
+        state: present
+        api_key: "{{ openshift_auth_results.openshift_auth.api_key }}"
+        definition:
+          apiVersion: operators.coreos.com/v1
+          kind: OperatorGroup
+          metadata:
+            name: openshift-gitops-operator
+            namespace: openshift-gitops-operator
+          spec: {}
+
+    - name: Install OpenShift GitOps
+      community.okd.k8s:
+        state: present
+        api_key: "{{ openshift_auth_results.openshift_auth.api_key }}"
+        validate_certs: no
+        definition:
+          apiVersion: operators.coreos.com/v1alpha1
+          kind: Subscription
+          metadata:
+            name: openshift-gitops-operator
+            namespace: openshift-operators
+          spec:
+            channel: "{{ gitops.version }}"
+            installPlanApproval: Automatic
+            name: openshift-gitops-operator
+            source: redhat-operators
+            sourceNamespace: openshift-marketplace
+      register: gitops_status
+      until: gitops_status.result.status.conditions | length <= 1
+      retries: 100
+      delay: 2
+      failed_when: gitops_status.result.status.conditions is not defined
+
+    - name: Debug installation to read readiness
+      debug:
+        msg:
+          - "{{ gitops_status['result']['status']['conditions'] | length }}"
+
+  when: gitops.install 
+
+- name: Completion
+  debug:
+    msg: Completed!
+

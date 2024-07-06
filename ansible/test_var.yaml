@@ -14,41 +14,56 @@ pull_secret_akv_key: pullSecret
 tags:
   createdBy: "test-user"
 
-
+## Parameters if needed to create Network Resources Values
 vnet:
-  create_network_resources: false
+  name: "ansible-aro-cluster-vnet"
   location: eastus
-  network_rg: aro-cluster-network-rg
+  network_rg: aro-cluster-network-rg 
   address_cidr: 10.0.0.0/22
   control_plane: 
-    existing_control_subnet_id: /subscriptions/ee0bc28d-c3d4-4efa-a187-c959a251e5f2/resourceGroups/aro-cluster-network-rg/providers/Microsoft.Network/virtualNetworks/ansible-aro-cluster-vnet/subnets/ansible-aro-cluster-control-subnet
+    name: ansible-aro-cluster-control-subnet
     address_cidr: 10.0.0.0/23
-    create:  yes
   worker_plane:
-    existing_worker_subnet_id: /subscriptions/ee0bc28d-c3d4-4efa-a187-c959a251e5f2/resourceGroups/aro-cluster-network-rg/providers/Microsoft.Network/virtualNetworks/ansible-aro-cluster-vnet/subnets/ansible-aro-cluster-worker-subnet
+    name: ansible-aro-cluster-worker-subnet
     address_cidr: 10.0.2.0/23
-    create:
 
 
 cluster:
+  conditionals:
+    create_network_vnet_and_subnets: True
+    specify_custom_domain: False
+    specify_version: True
+    specify_disk_encryption_set: False
+    specify_tags: True
+    encrypt_master_hosts: False
+    encrypt_worker_hosts: False
+    enable_preconfigured_nsg: False
+    enable_fips: False
   name: ansible-aro-cluster
   cluster_resource_group:  ansible-aro-main 
-  cluster_profile_resource_group: cluster-profile-ansible-aro-main
   location: eastus
-  domain: "mycluster.com"
-  ingress_visibility: Public
-  api_visibility: Public
-  pod_cidr: 10.0.64.0/18  ## 10.128.0.0/14
-  service_cidr: 172.32.0.0/16 ## 172.30.0.0/16
+  domain: mycluster.com
   version: "4.14.16"
-  control_instance: "Standard_D8s_v3"
+  control_instance: Standard_D8s_v3
   worker_disk: 128
   worker_node_count: 3
-  worker_instance: "Standard_D8s_v3"
-  azurefilesRegion: eastus
-  azurefilesResourceGroup: azure-files-rg
+  worker_instance: Standard_D4s_v3 
+  disk_encryption_set: ""
+  network:
+    vnet_name: ansible-aro-cluster-vnet
+    control_subnet_name: ansible-aro-cluster-control-subnet
+    worker_subnet_name: ansible-aro-cluster-worker-subnet
+    vnet_rg: aro-cluster-network-rg
+    outbound_type: Loadbalancer 
+    ingress_visibility: Public
+    api_visibility: Public
+    pod_cidr: 10.128.0.0/14
+    service_cidr: 172.30.0.0/16  
 
-# <cluster-name>-rg
+gitops:
+  install: true
+  version: "gitops-1.11"
+
 
 
 

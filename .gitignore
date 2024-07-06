@@ -1,2 +1,4 @@
 venv-aro/*
 ansible/common_var.yaml
+.vscode
+ansibel/.vscode/*

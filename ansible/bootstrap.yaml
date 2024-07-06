@@ -1,17 +1,16 @@
 ---
 
-- name: Setup Base Operators
+- name: Create OpenShift Clusters and Environment
   hosts: localhost
   connection: local
-  gather_facts: no
+  gather_facts: yes
 
   vars_files: 
     - common_var.yaml
     - test_var.yaml
 
-
   roles:
-    - roles/01-read-akv
-    - roles/02-create-network
-    - roles/03-create-cluster
-    - roles/04-wait-for-cluster
+    - roles/01-create-roles/01-read-akv
+    - roles/01-create-roles/02-create-network
+    - roles/01-create-roles/03-create-cluster
+    - roles/01-create-roles/04-bootstrap-gitops
