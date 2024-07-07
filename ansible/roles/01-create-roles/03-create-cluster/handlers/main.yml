@@ -1,7 +1,7 @@
 ---
 - debug:
     msg: "Waiting for cluster to finish provisioning."
-  listen: "watch aro installation"
+  listen: watch-aro-installation
 
 
 - name: Check cluster...
@@ -13,16 +13,16 @@
   failed_when: _aro_check.clusters.properties.provisioningState == "Failed"
   retries: 120
   delay: 60
-  listen: "watch aro installation"
+  listen: watch-aro-installation
 
 - fail:
     msg: "Cluster {{ azr_aro_cluster }} failed to provision."
   when: _aro_check.clusters.properties.provisioningState == "Failed"
-  listen: "watch aro installation"
+  listen: watch-aro-installation
 
 - set_fact:
     _cluster_ready: True
-  listen: "watch aro installation"
+  listen: watch-aro-installation
 
       # cat <<EOF | oc apply -f -
       # kind: StorageClass

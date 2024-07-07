@@ -18,13 +18,12 @@
 
 - name: Not a part of the main plays. Include by updating user in common variable file.
   block:
-    - name: debug
-      debug:
+    - debug:
         msg: 
           - "ARP API URL: {{ apiUrl.stdout }}"
           - "ARO Console: {{ consoleUrl.stdout }}"
-          - "ARO Login Username: {{ userName.stdout }}"
-          - "ARO Login Password: {{ passWord.stdout }}"
+          # - "ARO Login Username: {{ userName.stdout }}"
+          # - "ARO Login Password: {{ passWord.stdout }}"
 
     - name: Prepare local environment. Please Skip if this doesnt apply
       copy:
@@ -39,8 +38,8 @@
     - name: Write credentials to file for easy recall
       copy:
         content: |
-          Username: {{ userName.stdout }}
-          Password: {{ passWord.stdout }}
+          echo Username: {{ userName.stdout }}
+          echo Password: {{ passWord.stdout }}
         dest: /opt/homebrew/bin/aro-creds
         mode: '0755'
       no_log: true
@@ -55,12 +54,15 @@
         username: "{{ userName.stdout}}"
         password: "{{ passWord.stdout }}"
         host: "{{ apiUrl.stdout }}"
+        validate_certs: False
       register: openshift_auth_results
 
     - name: Create OpenShift GitOps Namespace
-      community.okd.k8s:
+      kubernetes.core.k8s:
         state: present
         api_key: "{{ openshift_auth_results.openshift_auth.api_key }}"
+        username: "{{ userName.stdout }}"
+        host: "{{ apiUrl.stdout }}"
         definition:
           apiVersion: v1
           kind: Namespace
@@ -72,9 +74,11 @@
               openshift.io/cluster-monitoring: 'true'
 
     - name: Create OpenShift GitOps Operator Group
-      community.okd.k8s:
+      kubernetes.core.k8s:
         state: present
         api_key: "{{ openshift_auth_results.openshift_auth.api_key }}"
+        username: "{{ userName.stdout }}"
+        host: "{{ apiUrl.stdout }}"
         definition:
           apiVersion: operators.coreos.com/v1
           kind: OperatorGroup
@@ -84,9 +88,11 @@
           spec: {}
 
     - name: Install OpenShift GitOps
-      community.okd.k8s:
+      kubernetes.core.k8s:
         state: present
         api_key: "{{ openshift_auth_results.openshift_auth.api_key }}"
+        username: "{{ userName.stdout }}"
+        host: "{{ apiUrl.stdout }}"
         validate_certs: no
         definition:
           apiVersion: operators.coreos.com/v1alpha1
@@ -101,19 +107,93 @@
             source: redhat-operators
             sourceNamespace: openshift-marketplace
       register: gitops_status
-      until: gitops_status.result.status.conditions | length <= 1
+      until: gitops_status.result.status is defined and gitops_status.result.status.conditions | length <= 1
       retries: 100
       delay: 2
       failed_when: gitops_status.result.status.conditions is not defined
 
-    - name: Debug installation to read readiness
-      debug:
-        msg:
-          - "{{ gitops_status['result']['status']['conditions'] | length }}"
+    - name: Create managed premium storage class
+      kubernetes.core.k8s:
+        state: present
+        api_key: "{{ openshift_auth_results.openshift_auth.api_key }}"
+        username: "{{ userName.stdout }}"
+        host: "{{ apiUrl.stdout }}"
+        validate_certs: no
+        definition:
+          apiVersion: storage.k8s.io/v1
+          kind: StorageClass
+          metadata:
+            name: managed-premium
+            annotations:
+              storageclass.kubernetes.io/is-default-class: 'true'
+          spec:
+          # provisioner: disk.csi.azure.com
+          provisioner: file.csi.azure.com
+          parameters:
+            skuname: Premium_LRS
+          reclaimPolicy: Delete
+          allowVolumeExpansion: true
+          volumeBindingMode: WaitForFirstConsumer
+
+    - name: Create azurefiles premium storage class
+      kubernetes.core.k8s:
+        state: present
+        api_key: "{{ openshift_auth_results.openshift_auth.api_key }}"
+        username: "{{ userName.stdout }}"
+        host: "{{ apiUrl.stdout }}"
+        validate_certs: no
+        definition:
+          apiVersion: storage.k8s.io/v1
+          kind: StorageClass
+          metadata:
+            name: azurefiles-premium
+          spec:
+          provisioner: file.csi.azure.com
+          parameters:
+            protocol: nfs
+            networkEndpointType: privateEndpoint
+            location: "{{ cluster.location }}"
+            resourceGroup: "{{ cluster.cluster_resource_group }}"
+            skuname: Premium_LRS
+          reclaimPolicy: Retain
+          allowVolumeExpansion: true
+          volumeBindingMode: Immediate
+
+  always:
+        - name: Logout after tasks (revoke access token)
+          when: openshift_auth_results.openshift_auth.api_key is defined
+          kubernetes.core.k8s_auth:
+            state: absent
+            host: "{{ apiUrl.stdout }}"
+            api_key: "{{ openshift_auth_results.openshift_auth.api_key }}"
 
   when: gitops.install 
 
+- name: Login into cluster for imperative commands
+  command: oc login -u {{ userName.stdout }} -p {{ passWord.stdout }} {{ apiUrl.stdout }}
+
+- name: Patch Gitops operator to enable plugin
+  command: >
+    oc patch consoles.operator.openshift.io cluster --type=json --patch '[{"op": "add", "path": "/spec/plugins/-", "value": "'"gitops-plugin"'"}]'
+
+- name: Get the list of secrets in the openshift-ingress namespace
+  command: oc get secret -n openshift-ingress -o name
+  register: secret_list_output
+
+- name: Find the secret that ends with ingress
+  set_fact:
+    OCP_INGRESS_TLS_SECRET_NAME: "{{ secret_list_output.stdout_lines | select('search', 'ingress$') | list | first | regex_replace('^secret/', '') }}"
+
+- name: Check if ingress secret was found
+  fail:
+    msg: "No secret ending with 'ingress' found in the openshift-ingress namespace."
+  when: OCP_INGRESS_TLS_SECRET_NAME is not defined
+
+- name: Print the ingress secret name
+  debug:
+    msg: "Ingress secret found: {{ OCP_INGRESS_TLS_SECRET_NAME }}"
+
 - name: Completion
   debug:
-    msg: Completed!
+    msg: Cluster Bootstrap Completed!
 

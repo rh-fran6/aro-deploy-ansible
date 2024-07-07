@@ -68,24 +68,44 @@ gitops:
 
 
 
-mas_variables:
-  IBM_ENTITLEMENT_KEY: "xxx" ## Read from AKV
-  SLS_LICENSE_ID: "xxx"  ## Read from AKV
-  SLS_LICENSE_FILE: "/path/to/entitlement.lic"  ## Read from AKV
+# mas_variables:
+#   IBM_ENTITLEMENT_KEY: "xxx" ## Read from AKV
+#   SLS_LICENSE_ID: "xxx"  ## Read from AKV
+#   SLS_LICENSE_FILE: "/path/to/entitlement.lic"  ## Read from AKV
 
-  MAS_INSTANCE_ID: "inst1"
-  MAS_CONFIG_DIR: "~/masconfig"
-  UDS_CONTACT_EMAIL: "xxx@xxx.com"
-  UDS_CONTACT_FIRSTNAME: "xxx"
-  UDS_CONTACT_LASTNAME: "xxx"
+#   MAS_INSTANCE_ID: "inst1"
+#   MAS_CONFIG_DIR: "~/masconfig"
+#   UDS_CONTACT_EMAIL: "xxx@xxx.com"
+#   UDS_CONTACT_FIRSTNAME: "xxx"
+#   UDS_CONTACT_LASTNAME: "xxx"
 
-  OCP_INGRESS_TLS_SECRET_NAME: $(oc get secret -n openshift-ingress | grep '-ingress$$' | awk '{print $1}')
 
 # test.apps.masq.$domain.com
 # uat.apps.masq.$domain.com
 # prod.apps.masq.$domain.com
 
+# uds_contact:
+#   email: email@redhat.com
+#   first_name: Francis
+#   last_name: Anyaegbu
+# mas_instance_id: "inst1"
+# mas_config_dir: "/home/inst1/masconfig"
+# mas_entitlement_key: "xxxxxxxxxxxxxxxx"  ## Preferably read from AKV
+# mas_annotations: "mas.ibm.com/operationalMode=nonproduction"
 
 
+## Using ibm.mas_devops.oneclick_core
+# Upload all other files in the current directory
+# https://ibm-mas.github.io/ansible-devops/playbooks/oneclick-core/
+IBM_ENTITLEMENT_KEY: xxx
+MAS_INSTANCE_ID: inst1
+MAS_CONFIG_DIR: ~/masconfig
+
+SLS_LICENSE_ID: xxx
+SLS_LICENSE_FILE: /path/to/entitlement.lic
+
+DRO_CONTACT_EMAIL: email@redhat.com
+DRO_CONTACT_FIRSTNAME: Francis
+DRO_CONTACT_LASTNAME: Anyaegbu
 
 

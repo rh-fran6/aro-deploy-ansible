@@ -1,5 +1,4 @@
 ---
-
 - name: Proceeding with bootstrapping GitOps
   block:
     - name: Proceeding to OpenShift GitOps preparation
@@ -7,8 +6,12 @@
         msg: 
           - "A cluster with the name {{ cluster.name }} already exists..."
           - "Cluster creationg steps will be skipped"
+      notify: watch-aro-installation
+      changed_when: true
 
   when: (_aro_check.clusters != {}) and (_aro_check.clusters.properties.provisioningState == "Succeeded")
+
+- meta: flush_handlers
 
 - name: Abort Cluster creation if initial cluster creation attempt fails
   block:
@@ -99,7 +102,8 @@
     - name: Run the dynamically built command
       raw: "{{ aro_command }}"
       register: cluster_create
-      notify: "watch aro installation"
+      notify: watch-aro-installation
+      changed_when: true
     
     - name: Cleanup Temporary Cluster Creation files
       ansible.builtin.file:
@@ -107,4 +111,11 @@
         state: absent
 
   when: _aro_check.clusters == {}
+
+- name: Proceeding...
+  debug:
+    msg: Proceeding to check cluster creation status
+  notify: watch-aro-installation
+  when: (_aro_check.clusters != {}) and (_aro_check.clusters.properties.provisioningState == "Creating")
+  changed_when: true
 
