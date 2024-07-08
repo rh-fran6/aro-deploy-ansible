@@ -3,13 +3,24 @@ SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
 VIRTUALENV ?= "venv-aro"
+CONFIGPATH ?= "ansible.cfg"
+TEMPFILE ?= "temp_file"
 
 .PHONY: help
 
 help:
 	@echo GLHF
 
-virtualenv:
+virtualenv:	
+	rm -rf $(CONFIGPATH)
+	ansible-config init --disabled -t all > $(CONFIGPATH)
+
+	awk 'NR==2{print "callbacks_enabled=ansible.posix.profile_tasks"} 1' $(CONFIGPATH) > $(TEMPFILE)
+
+	cat $(TEMPFILE) > $(CONFIGPATH)
+
+	rm $(TEMPFILE)
+	
 	rm -rf $(VIRTUALENV)
 	LC_ALL=en_US.UTF-8 python3 -m venv $(VIRTUALENV) --prompt "ARO Ansible Environment"
 	source $(VIRTUALENV)/bin/activate && \
@@ -36,4 +47,8 @@ deploy-mas:
 delete-cluster:
 	source $(VIRTUALENV)/bin/activate && \
 	ansible-playbook ansible/delete-cluster.yaml
+
+recreate-cluster:
+	source $(VIRTUALENV)/bin/activate && \
+	ansible-playbook ansible/recreate-cluster.yaml
 

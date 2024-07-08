@@ -1,17 +1,14 @@
-- name: Get the list of secrets in the openshift-ingress namespace
-  command: oc get secret -n openshift-ingress -o name
-  register: secret_list_output
+- debug:
+    msg: "Testing 1"
 
-- name: Find the secret that ends with ingress
-  set_fact:
-    OCP_INGRESS_TLS_SECRET_NAME: "{{ secret_list_output.stdout_lines | select('search', 'ingress$') | list | first | regex_replace('^secret/', '') }}"
+- debug:
+    msg: "Testing 2"
 
 - name: Check if ingress secret was found
-  fail:
+  debug:
     msg: "No secret ending with 'ingress' found in the openshift-ingress namespace."
-  when: OCP_INGRESS_TLS_SECRET_NAME is not defined
 
 - name: Print the ingress secret name
   debug:
-    msg: "Ingress secret found: {{ OCP_INGRESS_TLS_SECRET_NAME }}"
+    msg: "Completion"
 

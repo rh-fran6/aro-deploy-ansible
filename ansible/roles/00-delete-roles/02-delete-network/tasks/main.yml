@@ -19,8 +19,6 @@
     resource_group: "{{ vnet.network_rg }}"
   register: az_net_vnet
 
-- debug:
-    msg: "{{ az_net_vnet }}"
 
 - name: Delete a VNET for ARO
   azure.azcollection.azure_rm_virtualnetwork:

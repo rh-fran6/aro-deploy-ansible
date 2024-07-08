@@ -110,6 +110,8 @@
         path: pullsecret.txt
         state: absent
 
+    - meta: flush_handlers
+
   when: _aro_check.clusters == {}
 
 - name: Proceeding...
@@ -118,4 +120,6 @@
   notify: watch-aro-installation
   when: (_aro_check.clusters != {}) and (_aro_check.clusters.properties.provisioningState == "Creating")
   changed_when: true
+
+- meta: flush_handlers
 
