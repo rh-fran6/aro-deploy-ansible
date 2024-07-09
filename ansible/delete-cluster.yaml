@@ -1,15 +1,12 @@
 ---
-
 - name: Delete OpenShift Cluster & Environment
   hosts: localhost
   connection: local
-  gather_facts: no
+  gather_facts: false
 
-  vars_files: 
-    - test_var.yaml
+  vars_files:
+    - variables/test_var.yaml
 
 
   roles:
-    - roles/00-delete-roles/01-delete-cluster
-    - roles/00-delete-roles/02-delete-network
-    - roles/00-delete-roles/03-delete-message
+    - delete-aro-cluster

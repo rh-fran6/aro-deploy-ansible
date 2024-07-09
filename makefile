@@ -51,9 +51,9 @@ virtualenv:
 
 # Target to deploy the cluster
 .PHONY: deploy-cluster
-deploy-cluster:
+create-cluster:
 	source $(VIRTUALENV)/bin/activate && \
-	ansible-playbook ansible/bootstrap.yaml
+	ansible-playbook ansible/create-cluster.yaml
 
 # Target to deploy MAS
 .PHONY: deploy-mas

@@ -47,7 +47,7 @@ Install necessary Python packages and Ansible Galaxy collections.
 To deploy the ARO cluster using Ansible, run:
 
 ```sh
-make deploy-cluster
+make create-cluster
 ```
 
 This command will activate the virtual environment and run the ansible/bootstrap.yaml playbook.

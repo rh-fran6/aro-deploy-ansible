@@ -1,0 +1,452 @@
+---
+- name: Check if cluster with same name already exists.
+  azure.azcollection.azure_rm_openshiftmanagedcluster_info:
+    resource_group: "{{ cluster.cluster_resource_group }}"
+    name: "{{ cluster.name }}"
+  register: _aro_check
+
+- name: Abort Cluster creation if cluster with same name exists
+  when: _aro_check.clusters != {}
+  block:
+    - name: Checking whether to Abort. Abort if cluster with similar name exists
+      ansible.builtin.debug:
+        msg:
+          - "Previous installation of cluster with name {{ cluster.name }} exists..."
+    - name: Fail Installation Attempt
+      ansible.builtin.fail:
+        msg: |
+          Aborting {{ cluster.name }} cluster creation...
+
+- name: Get Key Vault by name
+  azure.azcollection.azure_rm_keyvault_info:
+    resource_group: "{{ akv_resource_group }}"
+    name: "{{ vault_name }}"
+    client_id: "{{ akv_read_client_id }}"
+    secret: "{{ akv_read_client_secret }}"
+    tenant: "{{ tenant_id }}"
+    subscription_id: "{{ subscription_id }}"
+  register: keyvault
+
+- name: Set key vault URI fact
+  ansible.builtin.set_fact:
+    keyvaulturi: "{{ keyvault['keyvaults'][0]['vault_uri'] }}"
+
+- name: Read Cluster Subscription_id from AKV
+  azure.azcollection.azure_rm_keyvaultsecret_info:
+    vault_uri: "{{ keyvaulturi }}"
+    name: "{{ cluster_subscription_id_key }}"
+    client_id: "{{ akv_read_client_id }}"
+    secret: "{{ akv_read_client_secret }}"
+    tenant: "{{ tenant_id }}"
+    subscription_id: "{{ subscription_id }}"
+  register: cluster_subscription_id
+
+- name: Read Cluster Service Principal from AKV - Client ID
+  azure.azcollection.azure_rm_keyvaultsecret_info:
+    vault_uri: "{{ keyvaulturi }}"
+    name: "{{ cluster_sp_id_key }}"
+    client_id: "{{ akv_read_client_id }}"
+    secret: "{{ akv_read_client_secret }}"
+    tenant: "{{ tenant_id }}"
+    subscription_id: "{{ subscription_id }}"
+  register: cluster_client_id
+
+- name: Read Cluster Service Principal from AKV - Client Secret
+  azure.azcollection.azure_rm_keyvaultsecret_info:
+    vault_uri: "{{ keyvaulturi }}"
+    name: "{{ cluster_sp_secret_key }}"
+    client_id: "{{ akv_read_client_id }}"
+    secret: "{{ akv_read_client_secret }}"
+    tenant: "{{ tenant_id }}"
+    subscription_id: "{{ subscription_id }}"
+  register: cluster_client_secret
+
+- name: Read Cluster Tenant ID from AKV
+  azure.azcollection.azure_rm_keyvaultsecret_info:
+    vault_uri: "{{ keyvaulturi }}"
+    name: "{{ cluster_tenant_id_key }}"
+    client_id: "{{ akv_read_client_id }}"
+    secret: "{{ akv_read_client_secret }}"
+    tenant: "{{ tenant_id }}"
+    subscription_id: "{{ subscription_id }}"
+  register: cluster_tenant_id
+
+- name: Read Pull Secret from AKV
+  azure.azcollection.azure_rm_keyvaultsecret_info:
+    vault_uri: "{{ keyvaulturi }}"
+    name: "{{ pull_secret_akv_key }}"
+    client_id: "{{ akv_read_client_id }}"
+    secret: "{{ akv_read_client_secret }}"
+    tenant: "{{ tenant_id }}"
+    subscription_id: "{{ subscription_id }}"
+  register: pull_secret
+
+- name: Set secrets from key vault into reusable variables
+  ansible.builtin.set_fact:
+    clientId: "{{ cluster_client_id['secrets'][0]['secret'] }}"
+    clientSecret: "{{ cluster_client_secret['secrets'][0]['secret'] }}"
+    tenantId: "{{ cluster_tenant_id['secrets'][0]['secret'] }}"
+    pullSecret: "{{ pull_secret['secrets'][0]['secret'] }}"
+    subscriptionId: "{{ cluster_subscription_id['secrets'][0]['secret'] }}"
+
+- name: Create Network resources if cluster.conditionals.create_network_vnet_and_subnets is set to True
+  when: cluster.conditionals.create_network_vnet_and_subnets
+  block:
+    - name: Create Resource Groups for VNET and Subnets
+      azure.azcollection.azure_rm_resourcegroup:
+        name: "{{ vnet.network_rg }}"
+        location: "{{ vnet.location }}"
+        state: present
+        tags: "{{ tags }}"
+
+    - name: Create a VNET for ARO
+      azure.azcollection.azure_rm_virtualnetwork:
+        resource_group: "{{ vnet.network_rg }}"
+        name: "{{ vnet.name }}"
+        address_prefixes_cidr: "{{ vnet.address_cidr }}"
+        tags: "{{ tags }}"
+
+    - name: Create a Control Plane Subnet
+      azure.azcollection.azure_rm_subnet:
+        resource_group: "{{ vnet.network_rg }}"
+        virtual_network_name: "{{ vnet.name }}"
+        name: "{{ vnet.control_plane.name }}"
+        address_prefix_cidr: "{{ vnet.control_plane.address_cidr }}"
+        service_endpoints:
+          - service: "Microsoft.ContainerRegistry"
+        private_link_service_network_policies: Disabled
+      register: controlSubnet
+
+    - name: Create Worker Nodes Subnet
+      azure.azcollection.azure_rm_subnet:
+        resource_group: "{{ vnet.network_rg }}"
+        virtual_network_name: "{{ vnet.name }}"
+        name: "{{ vnet.worker_plane.name }}"
+        address_prefix_cidr: "{{ vnet.worker_plane.address_cidr }}"
+        service_endpoints:
+          - service: "Microsoft.ContainerRegistry"
+      register: workerSubnet
+
+    - name: Set secrets from key vault into reusable variables
+      ansible.builtin.set_fact:
+        vnetName: "{{ vnet.name if cluster.conditionals.create_network_vnet_and_subnets else cluster.network.vnet_name }}"
+        vnetRG: "{{ vnet.network_rg if cluster.conditionals.create_network_vnet_and_subnets else cluster.network.vnet_rg }}"
+        controlSubnet: "{{ vnet.control_plane.name if cluster.conditionals.create_network_vnet_and_subnets else cluster.network.control_subnet_name }}"
+        workerSubnet: "{{ vnet.worker_plane.name if cluster.conditionals.create_network_vnet_and_subnets else cluster.network.worker_subnet_name }}"
+
+- name: Create Cluster Resource Group
+  azure.azcollection.azure_rm_resourcegroup:
+    name: "{{ cluster.cluster_resource_group }}"
+    location: "{{ cluster.location }}"
+    state: present
+    tags: "{{ tags }}"
+
+- name: Save pullSecret to File
+  ansible.builtin.copy:
+    content: "{{ pullSecret }}"
+    dest: pullsecret.txt
+    mode: '0644'
+
+- name: Cluster Creation Starting...
+  ansible.builtin.debug:
+    msg: |
+      ***************************************
+      Preparing to create {{ cluster.name }}. This task may take up to an hour.
+      ***************************************
+
+- name: Build the ARO Deployment base command
+  ansible.builtin.set_fact:
+    aro_command:
+      "az aro create
+      --subscription {{ subscriptionId }}
+      --resource-group {{ cluster.cluster_resource_group }}
+      --name {{ cluster.name }}
+      --location {{ cluster.location }}
+      --vnet {{ vnetName }}
+      --vnet-resource-group {{ vnetRG }}
+      --master-subnet {{ controlSubnet }}
+      --master-vm-size {{ cluster.control_instance }}
+      --master-enc-host --master-encryption-at-host {{ cluster.conditionals.encrypt_master_hosts }}
+      --worker-subnet {{ workerSubnet }}
+      --worker-count {{ cluster.worker_node_count }}
+      --worker-enc-host --worker-encryption-at-host {{ cluster.conditionals.encrypt_worker_hosts }}
+      --worker-vm-disk-size-gb {{ cluster.worker_disk }}
+      --worker-vm-size {{ cluster.worker_instance }}
+      --outbound-type {{ cluster.network.outbound_type }}
+      --pod-cidr {{ cluster.network.pod_cidr }}
+      --service-cidr {{ cluster.network.service_cidr }}
+      --enable-preconfigured-nsg {{ cluster.conditionals.enable_preconfigured_nsg }}
+      --pull-secret @pullsecret.txt
+      --apiserver-visibility {{ cluster.network.api_visibility }}
+      --ingress-visibility {{ cluster.network.ingress_visibility }}
+      --fips --fips-validated-modules {{ cluster.conditionals.enable_fips }}
+      --debug
+      --output json
+      --verbose
+      --no-wait"
+
+- name: Define Conditionally Added Parameters
+  ansible.builtin.set_fact:
+    optional_params:
+      - { param: 'domain', value: "{{ cluster.domain }}", condition: "{{ cluster.conditionals.specify_custom_domain }}" }
+      - { param: 'version', value: "{{ cluster.version }}", condition: "{{ cluster.conditionals.specify_version }}" }
+      - { param: 'disk-encryption-set', value: "{{ cluster.disk_encryption_set }}", condition: "{{ cluster.conditionals.specify_disk_encryption_set }}" }
+      - { param: 'tags', value: "{{ tags }}", condition: "{{ cluster.conditionals.specify_tags }}" }
+
+- name: Reconstruct ARO Deployment command
+  ansible.builtin.set_fact:
+    aro_command: "{{ aro_command }} --{{ item.param }} '{{ item.value }}'"
+  when: item.value is defined and item.value != '' and item.condition
+  with_items: "{{ optional_params }}"
+
+- name: Run the dynamically built command for ARO cluster creation
+  ansible.builtin.command: "{{ aro_command }}"
+  register: cluster_create
+  changed_when: cluster_create.rc != 0
+
+- name: Cleanup Temporary Cluster Creation files
+  ansible.builtin.file:
+    path: pullsecret.txt
+    state: absent
+
+- name: Wait for cluster installation to complete
+  ansible.builtin.debug:
+    msg: "Waiting for cluster to finish provisioning."
+
+- name: Check cluster creation status...
+  azure.azcollection.azure_rm_openshiftmanagedcluster_info:
+    resource_group: "{{ cluster.cluster_resource_group }}"
+    name: "{{ cluster.name }}"
+  register: _aro_check
+  until: (_aro_check.clusters.properties.provisioningState == "Succeeded")
+  failed_when: _aro_check.clusters.properties.provisioningState == "Failed"
+  retries: 120
+  delay: 60
+
+- name: Read ARO API URL
+  ansible.builtin.command: |
+    az aro show \
+    --name {{ cluster.name }} \
+    --resource-group {{ cluster.cluster_resource_group }} \
+    -o tsv \
+    --query apiserverProfile.url
+  register: apiUrl
+  changed_when: apiUrl.rc != 0
+
+- name: Read ARO Console URL
+  ansible.builtin.command: |
+    az aro show \
+    --name {{ cluster.name }} \
+    --resource-group {{ cluster.cluster_resource_group }} \
+    -o tsv \
+    --query consoleProfile.url
+  register: consoleUrl
+  changed_when: consoleUrl.rc != 0
+
+- name: Read ARO Username
+  ansible.builtin.command: |
+    az aro list-credentials \
+      --name "{{ cluster.name }}" \
+      --resource-group "{{ cluster.cluster_resource_group }}" \
+      -o tsv \
+      --query kubeadminUsername
+  register: userName
+  changed_when: userName.rc != 0
+
+- name: Read ARP Password
+  ansible.builtin.command: |
+    az aro list-credentials \
+    --name {{ cluster.name }} \
+    --resource-group {{ cluster.cluster_resource_group }} \
+    -o tsv \
+    --query kubeadminPassword
+  register: passWord
+  changed_when: passWord.rc != 0
+
+- name: Not a part of the main plays. Include by updating user in common variable file.
+  when: ansible_facts['user_id'] == user
+  block:
+    - name: Print cluster console and api URL
+      ansible.builtin.debug:
+        msg: |
+          "ARP API URL: {{ apiUrl.stdout }}"
+          "ARO Console: {{ consoleUrl.stdout }}"
+          # - "ARO Login Username: {{ userName.stdout }}"
+          # - "ARO Login Password: {{ passWord.stdout }}"
+
+    - name: Prepare local environment. Please Skip if this doesnt apply
+      ansible.builtin.copy:
+        content: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        mode: '0755'
+      no_log: true
+      with_items:
+        - { src: "oc login -u '{{ userName.stdout }}' -p '{{ passWord.stdout }}' '{{ apiUrl.stdout }}'", dest: "/opt/homebrew/bin/aro-login" }
+        - { src: "open -a 'Google Chrome.app' '{{ consoleUrl.stdout }}'", dest: "/opt/homebrew/bin/open-aro" }
+
+    - name: Write credentials to file for easy recall
+      ansible.builtin.copy:
+        content: |
+          echo Username: {{ userName.stdout }}
+          echo Password: {{ passWord.stdout }}
+        dest: /opt/homebrew/bin/aro-creds
+        mode: '0755'
+      no_log: true
+
+- name: Bootstrap OpenShift GitOps
+  when: gitops.install
+  block:
+
+    - name: Log in to OpenShift (obtain access token)
+      community.okd.openshift_auth:
+        username: "{{ userName.stdout }}"
+        password: "{{ passWord.stdout }}"
+        host: "{{ apiUrl.stdout }}"
+        validate_certs: false
+      register: openshift_auth_results
+
+    - name: Create OpenShift GitOps Namespace
+      kubernetes.core.k8s:
+        state: present
+        api_key: "{{ openshift_auth_results.openshift_auth.api_key }}"
+        username: "{{ userName.stdout }}"
+        host: "{{ apiUrl.stdout }}"
+        validate_certs: false
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: openshift-gitops-operator
+            annotations:
+              openshift.io/display-name: "OpenShift GitOps Operator"
+            labels:
+              openshift.io/cluster-monitoring: 'true'
+
+    - name: Create OpenShift GitOps Operator Group
+      kubernetes.core.k8s:
+        state: present
+        api_key: "{{ openshift_auth_results.openshift_auth.api_key }}"
+        username: "{{ userName.stdout }}"
+        host: "{{ apiUrl.stdout }}"
+        validate_certs: false
+        definition:
+          apiVersion: operators.coreos.com/v1
+          kind: OperatorGroup
+          metadata:
+            name: openshift-gitops-operator
+            namespace: openshift-gitops-operator
+          spec: {}
+
+    - name: Install OpenShift GitOps
+      kubernetes.core.k8s:
+        state: present
+        api_key: "{{ openshift_auth_results.openshift_auth.api_key }}"
+        username: "{{ userName.stdout }}"
+        host: "{{ apiUrl.stdout }}"
+        validate_certs: false
+        definition:
+          apiVersion: operators.coreos.com/v1alpha1
+          kind: Subscription
+          metadata:
+            name: openshift-gitops-operator
+            namespace: openshift-operators
+          spec:
+            channel: "{{ gitops.version }}"
+            installPlanApproval: Automatic
+            name: openshift-gitops-operator
+            source: redhat-operators
+            sourceNamespace: openshift-marketplace
+      register: gitops_status
+      until: gitops_status.result.status is defined and gitops_status.result.status.conditions | length <= 1
+      retries: 50
+      delay: 2
+      failed_when: gitops_status.result.status.conditions is not defined
+
+    - name: Create managed premium storage class
+      kubernetes.core.k8s:
+        state: present
+        api_key: "{{ openshift_auth_results.openshift_auth.api_key }}"
+        username: "{{ userName.stdout }}"
+        host: "{{ apiUrl.stdout }}"
+        validate_certs: false
+        definition:
+          apiVersion: storage.k8s.io/v1
+          kind: StorageClass
+          metadata:
+            name: managed-premium
+            annotations:
+              storageclass.kubernetes.io/is-default-class: 'true'
+          spec:
+          # provisioner: disk.csi.azure.com
+          provisioner: file.csi.azure.com
+          parameters:
+            skuname: Premium_LRS
+          reclaimPolicy: Delete
+          allowVolumeExpansion: true
+          volumeBindingMode: WaitForFirstConsumer
+
+    - name: Create azurefiles premium storage class
+      kubernetes.core.k8s:
+        state: present
+        api_key: "{{ openshift_auth_results.openshift_auth.api_key }}"
+        username: "{{ userName.stdout }}"
+        host: "{{ apiUrl.stdout }}"
+        validate_certs: false
+        definition:
+          apiVersion: storage.k8s.io/v1
+          kind: StorageClass
+          metadata:
+            name: azurefiles-premium
+          spec:
+          provisioner: file.csi.azure.com
+          parameters:
+            protocol: nfs
+            networkEndpointType: privateEndpoint
+            location: "{{ cluster.location }}"
+            resourceGroup: "{{ cluster.cluster_resource_group }}"
+            skuname: Premium_LRS
+          reclaimPolicy: Retain
+          allowVolumeExpansion: true
+          volumeBindingMode: Immediate
+
+  always:
+    - name: Logout after tasks (revoke access token)
+      community.okd.openshift_auth:
+        state: absent
+        host: "{{ apiUrl.stdout }}"
+        api_key: "{{ openshift_auth_results.openshift_auth.api_key }}"
+        validate_certs: false
+      when: openshift_auth_results.openshift_auth.api_key is defined
+
+- name: Login into cluster for imperative commands
+  ansible.builtin.command: oc login -u {{ userName.stdout }} -p {{ passWord.stdout }} {{ apiUrl.stdout }} --insecure-skip-tls-verify=True
+  register: login
+  changed_when: login.rc != 0
+
+- name: Patch Gitops operator to enable plugin
+  ansible.builtin.command: >
+    oc patch consoles.operator.openshift.io cluster --type=json --patch '[{"op": "add", "path": "/spec/plugins/-", "value": "'"gitops-plugin"'"}]'
+  register: plugin
+  changed_when: plugin.rc != 0
+
+- name: Get the list of secrets in the openshift-ingress namespace
+  ansible.builtin.command: oc get secret -n openshift-ingress -o name
+  register: secret_list_output
+  changed_when: secret_list_output.rc != 0
+
+- name: Find the secret that ends with ingress
+  ansible.builtin.set_fact:
+    OCP_INGRESS_TLS_SECRET_NAME: "{{ secret_list_output.stdout_lines | select('search', 'ingress$') | list | first | regex_replace('^secret/', '') }}"
+
+- name: Check if ingress secret was found
+  ansible.builtin.fail:
+    msg: "No secret ending with 'ingress' found in the openshift-ingress namespace."
+  when: OCP_INGRESS_TLS_SECRET_NAME is not defined
+
+- name: Print the ingress secret name
+  ansible.builtin.debug:
+    msg: "Ingress secret found: {{ OCP_INGRESS_TLS_SECRET_NAME }}"
+
+- name: Completion
+  ansible.builtin.debug:
+    msg: Cluster Bootstrap Completed!
