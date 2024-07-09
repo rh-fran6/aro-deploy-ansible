@@ -44,13 +44,44 @@ Install necessary Python packages and Ansible Galaxy collections.
 
 ### 2. Deploy Cluster
 
+Before proceeding with cluster deployment, prepare a variables file named ```common_var.yaml```. This file will store variables needed to access Azure Key Vault. This file contains Service Principal. If it is required to be pushed to SCM, please encrypt using ansible vault. Otherwise, each user can create the file for their instance of deployment. The file contains the following values:
+
+# Azure Key Vault Connection Details
+```sh
+subscription_id: <azure Key Vault subscription ID>
+tenant_id: <azure key vault tenant ID> 
+akv_read_client_id: <service principal ID with read access to key vault secrets>
+akv_read_client_secret: <service principal secret with read access to key vault secrets>
+vault_name: <key vault name>
+akv_resource_group: <key vault resource group>
+user: <your name >
+```
+
+## Azure Key Vault Read Service Principal 
+
+The azure key vault read service principal must have a minimum of the below privileges to be able to complete secret read from the Key Vault:
+
+```sh
+ "permissions": [
+            {
+                "actions": [
+                    "Microsoft.KeyVault/locations/*/read",
+                    "Microsoft.KeyVault/vaults/*"
+                ],
+                "dataActions": [
+                    "Microsoft.KeyVault/vaults/secrets/getSecret/action"
+                ]
+            }
+        ]
+```
+
 To deploy the ARO cluster using Ansible, run:
 
 ```sh
 make create-cluster
 ```
 
-This command will activate the virtual environment and run the ansible/bootstrap.yaml playbook.
+This command will activate the virtual environment and run the ```ansible/create-cluster.yaml``` playbook. This will call the ```create-aro-cluster``` role which proceeds to create the ARO cluster using the conditions specified in the ```test_var.yaml``` file.
 
 ### 3. Deploy MAS
 
@@ -60,7 +91,7 @@ To deploy MAS (IBM Maximo Application Suite) using Ansible, run:
 make deploy-mas
 ```
 
-This command will activate the virtual environment and run the ibm.mas_devops.oneclick_core playbook.
+This command will activate the virtual environment and run the ibm.mas_devops.oneclick_core playbook. The MAS roles can also be added to cluster creation role to enable one-click complete environment bootstrap.
 
 ### 4. Delete Cluster
 
@@ -70,7 +101,7 @@ To delete the ARO cluster using Ansible, run:
 make delete-cluster
 ```
 
-This command will activate the virtual environment and run the ansible/delete-cluster.yaml playbook.
+This command will activate the virtual environment and run the ansible/delete-cluster.yaml playbook which call the ```delete-aro-cluster``` role.
 
 ### 5. Recreate Cluster
 
@@ -80,7 +111,7 @@ To recreate the ARO cluster using Ansible, run:
 make recreate-cluster
 ```
 
-This command will activate the virtual environment and run the ansible/recreate-cluster.yaml playbook.
+This command will activate the virtual environment and run the ansible/recreate-cluster.yaml playbook. This calls 2 roles - the ```delete-aro-cluster``` and the ```create-aro-cluster roles``` in that order. The result is that any existing cluster with the same name as well as the network resources around that is deleted and a new cluster with same details is created.
 
 ## Makefile Overview
 
@@ -88,10 +119,10 @@ Here is an overview of the Makefile targets and their descriptions:
 
 * `help`: Displays usage information.
 * `virtualenv`: Creates a virtual environment, configures Ansible, and installs dependencies.
-* `deploy-cluster`: Deploys the ARO cluster using Ansible.
+* `create-cluster`: Deploys the ARO cluster using Ansible.
 * `deploy-mas`: Deploys MAS using Ansible.
 * `delete-cluster`: Deletes the ARO cluster using Ansible.
-* `recreate-cluster`: Recreates the ARO cluster using Ansible.
+* `recreate-cluster`: Deletes and recreates the ARO cluster using Ansible.
 
 ### Configuration
 The configuration for Ansible is generated and modified in the virtualenv target. The ansible.cfg file is initialized with all options disabled, and the ```sh callbacks_enabled=ansible.posix.profile_tasks``` option is added to enable task profiling.

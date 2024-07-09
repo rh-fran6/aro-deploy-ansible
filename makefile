@@ -14,7 +14,7 @@ TEMPFILE ?= "temp_file"
 help:
 	@echo "Usage:"
 	@echo "  make virtualenv      - Create a virtual environment and install dependencies"
-	@echo "  make deploy-cluster  - Deploy the cluster using Ansible"
+	@echo "  make create-cluster  - Deploy the cluster using Ansible"
 	@echo "  make deploy-mas      - Deploy MAS using Ansible"
 	@echo "  make delete-cluster  - Delete the cluster using Ansible"
 	@echo "  make recreate-cluster - Recreate the cluster using Ansible"
