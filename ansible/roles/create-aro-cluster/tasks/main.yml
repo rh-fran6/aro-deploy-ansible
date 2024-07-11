@@ -127,7 +127,7 @@
           - service: "Microsoft.ContainerRegistry"
       register: workerSubnet
 
-    - name: Set secrets from key vault into reusable variables
+    - name: Conditionally set variable names based on the condition settings
       ansible.builtin.set_fact:
         vnetName: "{{ vnet.name if cluster.conditionals.create_network_vnet_and_subnets else cluster.network.vnet_name }}"
         vnetRG: "{{ vnet.network_rg if cluster.conditionals.create_network_vnet_and_subnets else cluster.network.vnet_rg }}"
@@ -213,14 +213,14 @@
   ansible.builtin.debug:
     msg: "Waiting for cluster to finish provisioning."
 
-- name: Check cluster creation status...
+- name: Cluster creation in progress. Please wait...
   azure.azcollection.azure_rm_openshiftmanagedcluster_info:
     resource_group: "{{ cluster.cluster_resource_group }}"
     name: "{{ cluster.name }}"
   register: _aro_check
   until: (_aro_check.clusters.properties.provisioningState == "Succeeded")
   failed_when: _aro_check.clusters.properties.provisioningState == "Failed"
-  retries: 120
+  retries: 60
   delay: 60
 
 - name: Read ARO API URL
@@ -231,7 +231,7 @@
     -o tsv \
     --query apiserverProfile.url
   register: apiUrl
-  changed_when: apiUrl.rc != 0
+  changed_when: false
 
 - name: Read ARO Console URL
   ansible.builtin.command: |
@@ -241,7 +241,7 @@
     -o tsv \
     --query consoleProfile.url
   register: consoleUrl
-  changed_when: consoleUrl.rc != 0
+  changed_when: false
 
 - name: Read ARO Username
   ansible.builtin.command: |
@@ -251,7 +251,7 @@
       -o tsv \
       --query kubeadminUsername
   register: userName
-  changed_when: userName.rc != 0
+  changed_when: false
 
 - name: Read ARP Password
   ansible.builtin.command: |
@@ -261,16 +261,16 @@
     -o tsv \
     --query kubeadminPassword
   register: passWord
-  changed_when: passWord.rc != 0
+  changed_when: false
 
 - name: Not a part of the main plays. Include by updating user in common variable file.
   when: ansible_facts['user_id'] == user
   block:
     - name: Print cluster console and api URL
       ansible.builtin.debug:
-        msg: |
-          "ARP API URL: {{ apiUrl.stdout }}"
-          "ARO Console: {{ consoleUrl.stdout }}"
+        msg: 
+          - "ARP API URL: {{ apiUrl.stdout }}"
+          - "ARO Console: {{ consoleUrl.stdout }}"
           # - "ARO Login Username: {{ userName.stdout }}"
           # - "ARO Login Password: {{ passWord.stdout }}"
 
@@ -362,29 +362,31 @@
       delay: 2
       failed_when: gitops_status.result.status.conditions is not defined
 
-    - name: Create managed premium storage class
-      kubernetes.core.k8s:
-        state: present
-        api_key: "{{ openshift_auth_results.openshift_auth.api_key }}"
-        username: "{{ userName.stdout }}"
-        host: "{{ apiUrl.stdout }}"
-        validate_certs: false
-        definition:
-          apiVersion: storage.k8s.io/v1
-          kind: StorageClass
-          metadata:
-            name: managed-premium
-            annotations:
-              storageclass.kubernetes.io/is-default-class: 'true'
-          spec:
-          # provisioner: disk.csi.azure.com
-          provisioner: file.csi.azure.com
-          parameters:
-            skuname: Premium_LRS
-          reclaimPolicy: Delete
-          allowVolumeExpansion: true
-          volumeBindingMode: WaitForFirstConsumer
-
+    # https://learn.microsoft.com/en-us/azure/aks/concepts-storage
+    # managed-csi storageclass with premium_LRS sku already exists. No need creating another.
+    # - name: Create managed premium storage class
+    #   kubernetes.core.k8s:
+    #     state: present
+    #     api_key: "{{ openshift_auth_results.openshift_auth.api_key }}"
+    #     username: "{{ userName.stdout }}"
+    #     host: "{{ apiUrl.stdout }}"
+    #     validate_certs: false
+    #     definition:
+    #       apiVersion: storage.k8s.io/v1
+    #       kind: StorageClass
+    #       metadata:
+    #         name: managed-csi-premium
+    #         annotations:
+    #           storageclass.kubernetes.io/is-default-class: 'true'
+    #       spec:
+    #       provisioner: disk.csi.azure.com
+    #       parameters:
+    #         skuname: Premium_LRS
+    #       reclaimPolicy: Delete
+    #       allowVolumeExpansion: true
+    #       volumeBindingMode: WaitForFirstConsumer
+    # https://community.ibm.com/community/user/asset-facilities/blogs/sudhir-jain/2023/12/01/mas-on-aro
+    # https://learn.microsoft.com/en-us/azure/aks/azure-csi-files-storage-provision#create-a-storage-class
     - name: Create azurefiles premium storage class
       kubernetes.core.k8s:
         state: present
@@ -396,27 +398,34 @@
           apiVersion: storage.k8s.io/v1
           kind: StorageClass
           metadata:
-            name: azurefiles-premium
+            name: azurefile-csi-premium
           spec:
           provisioner: file.csi.azure.com
+          mountOptions:
+            - dir_mode=0777
+            - file_mode=0777
+            - uid=0
+            - gid=0
+            - mfsymlinks
+            - cache=strict
+            - nosharesock
+            - actimeo=30
           parameters:
-            protocol: nfs
-            networkEndpointType: privateEndpoint
-            location: "{{ cluster.location }}"
-            resourceGroup: "{{ cluster.cluster_resource_group }}"
             skuname: Premium_LRS
           reclaimPolicy: Retain
           allowVolumeExpansion: true
           volumeBindingMode: Immediate
 
   always:
+    - debug:
+        msg: "{{ openshift_auth_results }}"
     - name: Logout after tasks (revoke access token)
+      when: openshift_auth_results.openshift_auth.api_key is defined
       community.okd.openshift_auth:
         state: absent
         host: "{{ apiUrl.stdout }}"
         api_key: "{{ openshift_auth_results.openshift_auth.api_key }}"
         validate_certs: false
-      when: openshift_auth_results.openshift_auth.api_key is defined
 
 - name: Login into cluster for imperative commands
   ansible.builtin.command: oc login -u {{ userName.stdout }} -p {{ passWord.stdout }} {{ apiUrl.stdout }} --insecure-skip-tls-verify=True
@@ -450,3 +459,5 @@
 - name: Completion
   ansible.builtin.debug:
     msg: Cluster Bootstrap Completed!
+
+

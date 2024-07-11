@@ -27,6 +27,7 @@ vnet:
     name: ansible-aro-cluster-worker-subnet
     address_cidr: 10.0.2.0/23
 
+# outbound-type: Loadbalancer|UserDefinedRouting
 
 cluster:
   conditionals:
@@ -54,7 +55,7 @@ cluster:
     control_subnet_name: ansible-aro-cluster-control-subnet
     worker_subnet_name: ansible-aro-cluster-worker-subnet
     vnet_rg: aro-cluster-network-rg
-    outbound_type: Loadbalancer 
+    outbound_type: Loadbalancer  
     ingress_visibility: Public
     api_visibility: Public
     pod_cidr: 10.128.0.0/14
