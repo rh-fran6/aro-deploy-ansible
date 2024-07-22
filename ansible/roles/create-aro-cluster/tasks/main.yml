@@ -127,12 +127,12 @@
           - service: "Microsoft.ContainerRegistry"
       register: workerSubnet
 
-    - name: Conditionally set variable names based on the condition settings
-      ansible.builtin.set_fact:
-        vnetName: "{{ vnet.name if cluster.conditionals.create_network_vnet_and_subnets else cluster.network.vnet_name }}"
-        vnetRG: "{{ vnet.network_rg if cluster.conditionals.create_network_vnet_and_subnets else cluster.network.vnet_rg }}"
-        controlSubnet: "{{ vnet.control_plane.name if cluster.conditionals.create_network_vnet_and_subnets else cluster.network.control_subnet_name }}"
-        workerSubnet: "{{ vnet.worker_plane.name if cluster.conditionals.create_network_vnet_and_subnets else cluster.network.worker_subnet_name }}"
+- name: Conditionally set variable names based on the condition settings
+  ansible.builtin.set_fact:
+    vnetName: "{{ vnet.name if cluster.conditionals.create_network_vnet_and_subnets else cluster.network.vnet_name }}"
+    vnetRG: "{{ vnet.network_rg if cluster.conditionals.create_network_vnet_and_subnets else cluster.network.vnet_rg }}"
+    controlSubnet: "{{ vnet.control_plane.name if cluster.conditionals.create_network_vnet_and_subnets else cluster.network.control_subnet_name }}"
+    workerSubnet: "{{ vnet.worker_plane.name if cluster.conditionals.create_network_vnet_and_subnets else cluster.network.worker_subnet_name }}"
 
 - name: Create Cluster Resource Group
   azure.azcollection.azure_rm_resourcegroup:
@@ -416,16 +416,16 @@
           allowVolumeExpansion: true
           volumeBindingMode: Immediate
 
-  always:
-    - debug:
-        msg: "{{ openshift_auth_results }}"
-    - name: Logout after tasks (revoke access token)
-      when: openshift_auth_results.openshift_auth.api_key is defined
-      community.okd.openshift_auth:
-        state: absent
-        host: "{{ apiUrl.stdout }}"
-        api_key: "{{ openshift_auth_results.openshift_auth.api_key }}"
-        validate_certs: false
+  # always:
+  #   - debug:
+  #       msg: "{{ openshift_auth_results }}"
+  #   - name: Logout after tasks (revoke access token)
+  #     when: openshift_auth_results.openshift_auth.api_key is defined
+  #     community.okd.openshift_auth:
+  #       state: absent
+  #       host: "{{ apiUrl.stdout }}"
+  #       api_key: "{{ openshift_auth_results.openshift_auth.api_key }}"
+  #       validate_certs: false
 
 - name: Login into cluster for imperative commands
   ansible.builtin.command: oc login -u {{ userName.stdout }} -p {{ passWord.stdout }} {{ apiUrl.stdout }} --insecure-skip-tls-verify=True

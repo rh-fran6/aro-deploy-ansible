@@ -47,6 +47,8 @@ virtualenv:
 	ansible-galaxy collection install community.general && \
 	ansible-galaxy collection install community.okd && \
 	ansible-galaxy collection install ibm.mas_devops && \
+	PYTHONVER=$$(python3 --version | awk '{print $$2}') && \
+	venv-aro/lib/$${PYTHONVER}/site-packages/ansible_collections/azure/azcollection/requirements-azure.txt && \
 	deactivate
 
 # Target to deploy the cluster

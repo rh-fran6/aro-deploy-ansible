@@ -11,8 +11,7 @@ pull_secret_akv_key: pullSecret
 ## ARO Cluster Build Secrets
 
 
-tags:
-  createdBy: "test-user"
+tags: {createdBy: "test-user", createdBy2: "fran6"}
 
 ## Parameters if needed to create Network Resources Values
 vnet:
