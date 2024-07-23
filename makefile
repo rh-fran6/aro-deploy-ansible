@@ -56,6 +56,7 @@ virtualenv:
 	ansible-galaxy collection install ibm.mas_devops && \
 	PYTHONVER=$$(python3 --version | awk '{split($$2, a, "."); print a[1]"."a[2]}') && \
 	pip3 install -r venv-aro/lib64/python$${PYTHONVER}/site-packages/ansible_collections/azure/azcollection/requirements.txt && \
+	sudo dnf install azure-cli -y && \
 	deactivate
 
 # Target to deploy the cluster
