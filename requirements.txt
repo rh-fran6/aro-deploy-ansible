@@ -1,6 +1,6 @@
 packaging
 requests[security]
-ansible
+ansible[azure] -I
 xmltodict
 msgraph-sdk==1.0.0
 azure-cli-core==2.61.0

@@ -29,35 +29,31 @@ help:
 .PHONY: virtualenv
 virtualenv:
 	# Install Ansible
-	sudo dnf install ansible -y
+	# sudo dnf install ansible -y
 	# Remove old ansible.cfg if it exists
 	rm -rf $(CONFIGPATH)
-	# Generate a new ansible.cfg file with disabled options
-	ansible-config init --disabled -t all > $(CONFIGPATH)
-	# Insert the callback configuration at the second line
-	awk 'NR==2{print "callbacks_enabled=ansible.posix.profile_tasks"} 1' $(CONFIGPATH) > $(TEMPFILE)
-	cat $(TEMPFILE) > $(CONFIGPATH)
-	rm $(TEMPFILE)
 	# Remove old virtual environment if it exists
 	rm -rf $(VIRTUALENV)
 	# Create a new virtual environment
 	LC_ALL=en_US.UTF-8 python3 -m venv $(VIRTUALENV) --prompt "ARO Ansible Environment"
 	# Activate the virtual environment and install dependencies
+	@echo "Activating virtual environment and installing dependencies..."
 	source $(VIRTUALENV)/bin/activate && \
+	dnf install ansible && \
 	pip3 install --upgrade pip && \
-	pip3 install 'ansible>=2.9.2' && \
-	pip3 install -r requirements.txt && \
 	pip3 install setuptools && \
 	pip3 install ansible-lint && \
 	pip3 install junit_xml pymongo xmljson jmespath kubernetes openshift && \
+	pip3 install -r ~/.ansible/collections/ansible_collections/azure/azcollection/requirements-azure.txt && \
 	ansible-galaxy collection install azure.azcollection && \
 	ansible-galaxy collection install community.general && \
 	ansible-galaxy collection install community.okd && \
 	ansible-galaxy collection install ibm.mas_devops && \
-	PYTHONVER=$$(python3 --version | awk '{split($$2, a, "."); print a[1]"."a[2]}') && \
-	pip3 install -r venv-aro/lib64/python$${PYTHONVER}/site-packages/ansible_collections/azure/azcollection/requirements.txt && \
-	sudo dnf install azure-cli -y && \
-	deactivate
+	ansible-config init --disabled -t all > $(CONFIGPATH) && \
+	awk 'NR==2{print "callbacks_enabled=ansible.posix.profile_tasks"} 1' $(CONFIGPATH) > $(TEMPFILE) && \
+	cat $(TEMPFILE) > $(CONFIGPATH) && \
+	rm -rf $(TEMPFILE) && \
+	deactivate 
 
 # Target to deploy the cluster
 .PHONY: deploy-cluster
