@@ -23,6 +23,8 @@ help:
 # Target to create virtual environment and configure Ansible
 .PHONY: virtualenv
 virtualenv:
+	# Install Ansible
+	sudo dnf install ansible -y
 	# Remove old ansible.cfg if it exists
 	rm -rf $(CONFIGPATH)
 	# Generate a new ansible.cfg file with disabled options
@@ -47,8 +49,8 @@ virtualenv:
 	ansible-galaxy collection install community.general && \
 	ansible-galaxy collection install community.okd && \
 	ansible-galaxy collection install ibm.mas_devops && \
-	PYTHONVER=$$(python3 --version | awk '{print $$2}') && \
-	venv-aro/lib/$${PYTHONVER}/site-packages/ansible_collections/azure/azcollection/requirements-azure.txt && \
+	PYTHONVER=$$(python3 --version | awk '{split($$2, a, "."); print a[1]"."a[2]}') && \
+	pip3 install -r venv-aro/lib64/python$${PYTHONVER}/site-packages/ansible_collections/azure/azcollection/requirements.txt && \
 	deactivate
 
 # Target to deploy the cluster
