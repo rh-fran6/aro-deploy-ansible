@@ -362,9 +362,9 @@
       delay: 2
       failed_when: gitops_status.result.status.conditions is not defined
 
-    # https://learn.microsoft.com/en-us/azure/aks/concepts-storage
-    # managed-csi storageclass with premium_LRS sku already exists. No need creating another.
-    # - name: Create managed premium storage class
+    # https://community.ibm.com/community/user/asset-facilities/blogs/sudhir-jain/2023/12/01/mas-on-aro
+    # https://learn.microsoft.com/en-us/azure/aks/azure-csi-files-storage-provision#create-a-storage-class
+    # - name: Create azurefiles premium storage class
     #   kubernetes.core.k8s:
     #     state: present
     #     api_key: "{{ openshift_auth_results.openshift_auth.api_key }}"
@@ -375,46 +375,23 @@
     #       apiVersion: storage.k8s.io/v1
     #       kind: StorageClass
     #       metadata:
-    #         name: managed-csi-premium
-    #         annotations:
-    #           storageclass.kubernetes.io/is-default-class: 'true'
+    #         name: azurefile-csi-premium
     #       spec:
-    #       provisioner: disk.csi.azure.com
+    #       provisioner: file.csi.azure.com
+    #       mountOptions:
+    #         - dir_mode=0777
+    #         - file_mode=0777
+    #         - uid=0
+    #         - gid=0
+    #         - mfsymlinks
+    #         - cache=strict
+    #         - nosharesock
+    #         - actimeo=30
     #       parameters:
     #         skuname: Premium_LRS
-    #       reclaimPolicy: Delete
+    #       reclaimPolicy: Retain
     #       allowVolumeExpansion: true
-    #       volumeBindingMode: WaitForFirstConsumer
-    # https://community.ibm.com/community/user/asset-facilities/blogs/sudhir-jain/2023/12/01/mas-on-aro
-    # https://learn.microsoft.com/en-us/azure/aks/azure-csi-files-storage-provision#create-a-storage-class
-    - name: Create azurefiles premium storage class
-      kubernetes.core.k8s:
-        state: present
-        api_key: "{{ openshift_auth_results.openshift_auth.api_key }}"
-        username: "{{ userName.stdout }}"
-        host: "{{ apiUrl.stdout }}"
-        validate_certs: false
-        definition:
-          apiVersion: storage.k8s.io/v1
-          kind: StorageClass
-          metadata:
-            name: azurefile-csi-premium
-          spec:
-          provisioner: file.csi.azure.com
-          mountOptions:
-            - dir_mode=0777
-            - file_mode=0777
-            - uid=0
-            - gid=0
-            - mfsymlinks
-            - cache=strict
-            - nosharesock
-            - actimeo=30
-          parameters:
-            skuname: Premium_LRS
-          reclaimPolicy: Retain
-          allowVolumeExpansion: true
-          volumeBindingMode: Immediate
+    #       volumeBindingMode: Immediate
 
   # always:
   #   - debug:

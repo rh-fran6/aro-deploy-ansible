@@ -1,4 +1,9 @@
 # Use bash shell
+
+## Install these 2 first:
+# yum groupinstall "Development Tools"
+# dnf install git git-all 
+
 SHELL := /bin/bash
 
 # Default goal to be displayed when no target is specified
