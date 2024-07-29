@@ -2,6 +2,7 @@
 - name: Check if cluster with same name already exists.
   azure.azcollection.azure_rm_openshiftmanagedcluster_info:
     resource_group: "{{ cluster.cluster_resource_group }}"
+    subscription_id:  "{{ cluster.subscription_id }}"
     name: "{{ cluster.name }}"
   register: _aro_check
 
@@ -15,7 +16,8 @@
     - name: Fail Installation Attempt
       ansible.builtin.fail:
         msg: |
-          Aborting {{ cluster.name }} cluster creation...
+          - Aborting {{ cluster.name }} cluster creation...
+          - Error: "{{ _aro_check.clusters }}"
 
 - name: Get Key Vault by name
   azure.azcollection.azure_rm_keyvault_info:
@@ -81,10 +83,21 @@
     subscription_id: "{{ subscription_id }}"
   register: pull_secret
 
+- name: Read Cluster Service Principal Object id
+  azure.azcollection.azure_rm_keyvaultsecret_info:
+    vault_uri: "{{ keyvaulturi }}"
+    name: "{{ cluster_sp_object_id_key }}"
+    client_id: "{{ akv_read_client_id }}"
+    secret: "{{ akv_read_client_secret }}"
+    tenant: "{{ tenant_id }}"
+    subscription_id: "{{ subscription_id }}"
+  register: cluster_sp_object_id  
+
 - name: Set secrets from key vault into reusable variables
   ansible.builtin.set_fact:
     clientId: "{{ cluster_client_id['secrets'][0]['secret'] }}"
     clientSecret: "{{ cluster_client_secret['secrets'][0]['secret'] }}"
+    spObjectIdVal: "{{ cluster_sp_object_id['secrets'][0]['secret'] }}"
     tenantId: "{{ cluster_tenant_id['secrets'][0]['secret'] }}"
     pullSecret: "{{ pull_secret['secrets'][0]['secret'] }}"
     subscriptionId: "{{ cluster_subscription_id['secrets'][0]['secret'] }}"
@@ -96,20 +109,23 @@
       azure.azcollection.azure_rm_resourcegroup:
         name: "{{ vnet.network_rg }}"
         location: "{{ vnet.location }}"
+        subscription_id: "{{ installer.subscription_id }}"
         state: present
-        tags: "{{ tags }}"
+        tags:  "{{ tags | items2dict(key_name='key', value_name='value') }}"
 
     - name: Create a VNET for ARO
       azure.azcollection.azure_rm_virtualnetwork:
         resource_group: "{{ vnet.network_rg }}"
+        subscription_id: "{{ installer.subscription_id }}"
         name: "{{ vnet.name }}"
         address_prefixes_cidr: "{{ vnet.address_cidr }}"
-        tags: "{{ tags }}"
+        tags:   "{{ tags | items2dict(key_name='key', value_name='value') }}"
 
     - name: Create a Control Plane Subnet
       azure.azcollection.azure_rm_subnet:
         resource_group: "{{ vnet.network_rg }}"
         virtual_network_name: "{{ vnet.name }}"
+        subscription_id: "{{ installer.subscription_id }}"
         name: "{{ vnet.control_plane.name }}"
         address_prefix_cidr: "{{ vnet.control_plane.address_cidr }}"
         service_endpoints:
@@ -120,6 +136,7 @@
     - name: Create Worker Nodes Subnet
       azure.azcollection.azure_rm_subnet:
         resource_group: "{{ vnet.network_rg }}"
+        subscription_id: "{{ installer.subscription_id }}"
         virtual_network_name: "{{ vnet.name }}"
         name: "{{ vnet.worker_plane.name }}"
         address_prefix_cidr: "{{ vnet.worker_plane.address_cidr }}"
@@ -137,9 +154,96 @@
 - name: Create Cluster Resource Group
   azure.azcollection.azure_rm_resourcegroup:
     name: "{{ cluster.cluster_resource_group }}"
+    subscription_id: "{{ installer.subscription_id }}"
     location: "{{ cluster.location }}"
     state: present
-    tags: "{{ tags }}"
+    tags:  "{{ tags | items2dict(key_name='key', value_name='value') }}"
+
+- name: Wait until the resource group exists
+  azure.azcollection.azure_rm_resourcegroup_info:
+    name: "{{ cluster.cluster_resource_group }}"
+    subscription_id: "{{ installer.subscription_id }}"
+  register: rg_facts
+  until: rg_facts.resourcegroups and rg_facts.resourcegroups[0].properties.provisioning_state == "Succeeded"
+  retries: 2
+  delay: 20
+
+- name: "Grab Cluster Service Principal User ID"
+  azure.azcollection.azure_rm_adserviceprincipal_info:
+    app_id: "{{ clientId }}"
+  register: useraccounts
+
+- name: Create Azure policy for the Cluster Resource Group
+  when: cluster.conditionals.create_azure_policy_for_tags
+  block:
+    - name: Read policy rule JSON
+      slurp:
+        src: roles/create-aro-cluster/files/policy_rule.json
+      register: policy_rule_content
+
+    - name: Read policy parameters JSON
+      slurp:
+        src: roles/create-aro-cluster/files/policy_parameters.json
+      register: policy_parameters_content
+
+    - name: Create Azure policy Definition
+      azure.azcollection.azure_rm_resource:
+        url: "https://management.azure.com/subscriptions/{{ cluster.subscription_id }}/providers/Microsoft.Authorization/policyDefinitions/{{ cluster.policy_definition }}?api-version=2023-04-01"
+        method: PUT
+        body:
+          properties:
+            mode: "All"
+            displayName: "{{ cluster.policy_definition }}"
+            description: "RO Cluster Tag Policy Definition"
+            policyRule: "{{ policy_rule_content.content | b64decode | from_json }}"
+            parameters: "{{ policy_parameters_content.content | b64decode | from_json }}"
+      register: policyDefinition
+    
+    - name: Create dynamic params for policy assignment
+      set_fact:
+        dynamic_params: >
+          {
+            {% for tag in tags %}
+            "tag{{ loop.index0 }}": {
+              "value": {
+                "tag": [
+                  "{{ tag.key }}",
+                  "{{ tag.value }}"
+                ]
+              }
+            }{% if not loop.last %},{% endif %}
+            {% endfor %},
+            "resourceGroupName": {
+              "value": "{{ cluster.cluster_resource_group }}"
+            }
+          }
+
+    - name: Create Azure policy Assignment
+      ansible.builtin.command: >
+        az policy assignment create -n {{ cluster.policy_definition }}-{{ cluster.name }} \
+        --policy {{ cluster.policy_definition }} \
+        --scope "/subscriptions/{{ cluster.subscription_id }}" \
+        --location {{ cluster.location }} \
+        --mi-system-assigned \
+        --role "Tag Contributor" \
+        --identity-scope "/subscriptions/{{ cluster.subscription_id }}" \
+        --params '{{ dynamic_params | to_json }}'
+
+- name: Assign Contributor Role to SP in Resource Group "{{ cluster.cluster_resource_group }}"
+  when: cluster.conditionals.use_aro_sp
+  azure.azcollection.azure_rm_roleassignment:
+    scope: "{{ rg_facts.resourcegroups[0].id }}"
+    assignee_object_id: "{{ useraccounts.service_principals[0].object_id }}"
+    role_definition_id:
+      "/subscriptions/{{ cluster.subscription_id }}/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c"
+ 
+- name: Assign Network Contributor Role VNET "{{ vnetName }}"
+  when: cluster.conditionals.use_aro_sp
+  azure.azcollection.azure_rm_roleassignment:
+    scope: /subscriptions/{{ cluster.subscription_id }}/resourceGroups/{{ vnetRG }}/providers/Microsoft.Network/virtualNetworks/{{ vnetName }}
+    assignee_object_id: "{{ useraccounts.service_principals[0].object_id }}"
+    role_definition_id:
+      "/subscriptions/{{ cluster.subscription_id }}/providers/Microsoft.Authorization/roleDefinitions/4d97b98b-1d4f-4787-a291-c67834d212e7"
 
 - name: Save pullSecret to File
   ansible.builtin.copy:
@@ -191,7 +295,9 @@
       - { param: 'domain', value: "{{ cluster.domain }}", condition: "{{ cluster.conditionals.specify_custom_domain }}" }
       - { param: 'version', value: "{{ cluster.version }}", condition: "{{ cluster.conditionals.specify_version }}" }
       - { param: 'disk-encryption-set', value: "{{ cluster.disk_encryption_set }}", condition: "{{ cluster.conditionals.specify_disk_encryption_set }}" }
-      - { param: 'tags', value: "{{ tags }}", condition: "{{ cluster.conditionals.specify_tags }}" }
+      - { param: 'client-id', value: "{{ clientId }}", condition: "{{ cluster.conditionals.use_aro_sp }}" }
+      - { param: 'client-secret', value: "{{ clientSecret }}", condition: "{{ cluster.conditionals.use_aro_sp }}" }
+  no_log: True
 
 - name: Reconstruct ARO Deployment command
   ansible.builtin.set_fact:
@@ -199,10 +305,16 @@
   when: item.value is defined and item.value != '' and item.condition
   with_items: "{{ optional_params }}"
 
+- name: Save dynamically generated script artefact
+  ansible.builtin.copy:
+    content: "{{ aro_command }}"
+    dest: artefacts/ansibleruncommand.sh
+
 - name: Run the dynamically built command for ARO cluster creation
   ansible.builtin.command: "{{ aro_command }}"
   register: cluster_create
   changed_when: cluster_create.rc != 0
+  when: ( not _aro_check.clusters )
 
 - name: Cleanup Temporary Cluster Creation files
   ansible.builtin.file:
@@ -218,7 +330,7 @@
     resource_group: "{{ cluster.cluster_resource_group }}"
     name: "{{ cluster.name }}"
   register: _aro_check
-  until: (_aro_check.clusters.properties.provisioningState == "Succeeded")
+  until: (_aro_check.clusters.properties and _aro_check.clusters.properties.provisioningState == "Succeeded")
   failed_when: _aro_check.clusters.properties.provisioningState == "Failed"
   retries: 60
   delay: 60
@@ -269,41 +381,41 @@
     - name: Print cluster console and api URL
       ansible.builtin.debug:
         msg: 
-          - "ARP API URL: {{ apiUrl.stdout }}"
-          - "ARO Console: {{ consoleUrl.stdout }}"
+          - "ARP API URL:....... {{ apiUrl.stdout }}"
+          - "ARO Console:....... {{ consoleUrl.stdout }}"
           # - "ARO Login Username: {{ userName.stdout }}"
           # - "ARO Login Password: {{ passWord.stdout }}"
 
     - name: Prepare local environment. Please Skip if this doesnt apply
-      ansible.builtin.copy:
-        content: "{{ item.src }}"
-        dest: "{{ item.dest }}"
-        mode: '0755'
       no_log: true
       with_items:
         - { src: "oc login -u '{{ userName.stdout }}' -p '{{ passWord.stdout }}' '{{ apiUrl.stdout }}'", dest: "/opt/homebrew/bin/aro-login" }
         - { src: "open -a 'Google Chrome.app' '{{ consoleUrl.stdout }}'", dest: "/opt/homebrew/bin/open-aro" }
+      ansible.builtin.copy:
+        content: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        mode: '0755'
 
     - name: Write credentials to file for easy recall
+      no_log: true
       ansible.builtin.copy:
         content: |
           echo Username: {{ userName.stdout }}
           echo Password: {{ passWord.stdout }}
         dest: /opt/homebrew/bin/aro-creds
         mode: '0755'
-      no_log: true
+
+- name: Log in to OpenShift (obtain access token)
+  register: openshift_auth_results
+  community.okd.openshift_auth:
+    username: "{{ userName.stdout }}"
+    password: "{{ passWord.stdout }}"
+    host: "{{ apiUrl.stdout }}"
+    validate_certs: false
 
 - name: Bootstrap OpenShift GitOps
-  when: gitops.install
+  when: integrations.gitops.add
   block:
-
-    - name: Log in to OpenShift (obtain access token)
-      community.okd.openshift_auth:
-        username: "{{ userName.stdout }}"
-        password: "{{ passWord.stdout }}"
-        host: "{{ apiUrl.stdout }}"
-        validate_certs: false
-      register: openshift_auth_results
 
     - name: Create OpenShift GitOps Namespace
       kubernetes.core.k8s:
@@ -335,9 +447,19 @@
           metadata:
             name: openshift-gitops-operator
             namespace: openshift-gitops-operator
-          spec: {}
+          spec: {}    
 
-    - name: Install OpenShift GitOps
+    - name: Install OpenShift GitOps Subscription
+      until: >
+        gitops_status.result.status is defined and
+        gitops_status.result.status.conditions is defined and
+        gitops_status.result.status.conditions | selectattr('type', '==', 'CatalogSourcesUnhealthy') | selectattr('status', '==', 'False') | list | length > 0 and
+        gitops_status.result.status.catalogHealth is defined and
+        gitops_status.result.status.catalogHealth | selectattr('healthy', '==', true) | list | length == gitops_status.result.status.catalogHealth | length and
+        gitops_status.result.status.conditions | selectattr('reason', '!=', 'AllCatalogSourcesHealthy') | list | length == 0
+      retries: 50
+      delay: 2
+      register: gitops_status
       kubernetes.core.k8s:
         state: present
         api_key: "{{ openshift_auth_results.openshift_auth.api_key }}"
@@ -351,90 +473,237 @@
             name: openshift-gitops-operator
             namespace: openshift-operators
           spec:
-            channel: "{{ gitops.version }}"
+            channel: "{{ integrations.gitops.version }}"
             installPlanApproval: Automatic
             name: openshift-gitops-operator
             source: redhat-operators
             sourceNamespace: openshift-marketplace
-      register: gitops_status
-      until: gitops_status.result.status is defined and gitops_status.result.status.conditions | length <= 1
+
+    - name: Read openshift console object called cluster
+      register: console_plugin
+      kubernetes.core.k8s_info:
+        kind: Console
+        api_key: "{{ openshift_auth_results.openshift_auth.api_key }}"
+        username: "{{ userName.stdout }}"
+        host: "{{ apiUrl.stdout }}"
+        validate_certs: false
+        api_version: operator.openshift.io/v1
+        name: cluster
+  
+    - name: Apply multiple patch operations to an existing cluster Console
+      when: "('plugins' not in console_plugin.resources[0].spec) or ('gitops-plugin' not in console_plugin.resources[0].spec.plugins)"
+      kubernetes.core.k8s_json_patch:
+        api_key: "{{ openshift_auth_results.openshift_auth.api_key }}"
+        username: "{{ userName.stdout }}"
+        host: "{{ apiUrl.stdout }}"
+        api_version: operator.openshift.io/v1
+        validate_certs: false
+        kind: Console
+        name: cluster
+        patch:
+          - op: add
+            path: /spec/plugins/-
+            value: gitops-plugin
+
+- name: Bootstrap External Secrets Operator
+  when: integrations.eso.add
+  block:
+
+    - name: Install External Secrets Operator Subscription
+      register: eso_status
+      until: >
+        eso_status.result.status is defined and
+        eso_status.result.status.conditions is defined and
+        eso_status.result.status.conditions | selectattr('type', '==', 'CatalogSourcesUnhealthy') | selectattr('status', '==', 'False') | list | length > 0 and
+        eso_status.result.status.catalogHealth is defined and
+        eso_status.result.status.catalogHealth | selectattr('healthy', '==', true) | list | length == gitops_status.result.status.catalogHealth | length and
+        eso_status.result.status.conditions | selectattr('reason', '!=', 'AllCatalogSourcesHealthy') | list | length == 0
       retries: 50
       delay: 2
-      failed_when: gitops_status.result.status.conditions is not defined
+      kubernetes.core.k8s:
+        state: present
+        api_key: "{{ openshift_auth_results.openshift_auth.api_key }}"
+        username: "{{ userName.stdout }}"
+        host: "{{ apiUrl.stdout }}"
+        validate_certs: false
+        definition:
+          apiVersion: operators.coreos.com/v1alpha1
+          kind: Subscription
+          metadata:
+            name: external-secrets-operator-subscription
+            namespace: openshift-operators
+          spec:
+            channel: "{{ integrations.eso.version }}"
+            installPlanApproval: Automatic
+            name: external-secrets-operator
+            source: community-operators
+            sourceNamespace: openshift-marketplace
 
-    # https://community.ibm.com/community/user/asset-facilities/blogs/sudhir-jain/2023/12/01/mas-on-aro
-    # https://learn.microsoft.com/en-us/azure/aks/azure-csi-files-storage-provision#create-a-storage-class
-    # - name: Create azurefiles premium storage class
-    #   kubernetes.core.k8s:
-    #     state: present
-    #     api_key: "{{ openshift_auth_results.openshift_auth.api_key }}"
-    #     username: "{{ userName.stdout }}"
-    #     host: "{{ apiUrl.stdout }}"
-    #     validate_certs: false
-    #     definition:
-    #       apiVersion: storage.k8s.io/v1
-    #       kind: StorageClass
-    #       metadata:
-    #         name: azurefile-csi-premium
-    #       spec:
-    #       provisioner: file.csi.azure.com
-    #       mountOptions:
-    #         - dir_mode=0777
-    #         - file_mode=0777
-    #         - uid=0
-    #         - gid=0
-    #         - mfsymlinks
-    #         - cache=strict
-    #         - nosharesock
-    #         - actimeo=30
-    #       parameters:
-    #         skuname: Premium_LRS
-    #       reclaimPolicy: Retain
-    #       allowVolumeExpansion: true
-    #       volumeBindingMode: Immediate
+    - name: Create External Secrets Operator Instance Config 
+      kubernetes.core.k8s:
+        state: present
+        api_key: "{{ openshift_auth_results.openshift_auth.api_key }}"
+        username: "{{ userName.stdout }}"
+        host: "{{ apiUrl.stdout }}"
+        validate_certs: false
+        definition:
+          apiVersion: operator.external-secrets.io/v1alpha1
+          kind: OperatorConfig
+          metadata:
+            name: cluster
+            namespace: openshift-operators
+          spec:
+            prometheus:
+              enabled: true
+              service:
+                port: 8080
+            resources:
+             requests:
+               cpu: 10m
+               memory: 96Mi
+             limits:
+               cpu: 100m
+               memory: 256Mi
 
-  # always:
-  #   - debug:
-  #       msg: "{{ openshift_auth_results }}"
-  #   - name: Logout after tasks (revoke access token)
-  #     when: openshift_auth_results.openshift_auth.api_key is defined
-  #     community.okd.openshift_auth:
-  #       state: absent
-  #       host: "{{ apiUrl.stdout }}"
-  #       api_key: "{{ openshift_auth_results.openshift_auth.api_key }}"
-  #       validate_certs: false
+    - name: Create External Secrets Operator Read Secret 
+      kubernetes.core.k8s:
+        state: present
+        api_key: "{{ openshift_auth_results.openshift_auth.api_key }}"
+        username: "{{ userName.stdout }}"
+        host: "{{ apiUrl.stdout }}"
+        validate_certs: false
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: akv-sp-read
+            namespace: openshift-operators
+          type: opaque
+          data:
+            ClientID: "{{ akv_read_client_id | b64encode }}"
+            ClientSecret: "{{ akv_read_client_secret | b64encode }}"
 
-- name: Login into cluster for imperative commands
-  ansible.builtin.command: oc login -u {{ userName.stdout }} -p {{ passWord.stdout }} {{ apiUrl.stdout }} --insecure-skip-tls-verify=True
-  register: login
-  changed_when: login.rc != 0
+    - name: Create External Secrets Operator ClusterSecretStore 
+      kubernetes.core.k8s:
+        state: present
+        api_key: "{{ openshift_auth_results.openshift_auth.api_key }}"
+        username: "{{ userName.stdout }}"
+        host: "{{ apiUrl.stdout }}"
+        validate_certs: false
+        definition:          
+          apiVersion: external-secrets.io/v1beta1
+          kind: ClusterSecretStore
+          metadata:
+            name: akv-cluster-secret-read
+          spec:
+            provider:
+              azurekv:
+                tenantId: "{{ tenant_id }}"
+                vaultUrl: "https://{{ vault_name }}.vault.azure.net"
+                authSecretRef:
+                  clientId:
+                    name: akv-sp-read
+                    key: ClientID
+                    namespace: "openshift-operators"
+                  clientSecret:
+                    name: akv-sp-read
+                    key: ClientSecret
+                    namespace: "openshift-operators"
 
-- name: Patch Gitops operator to enable plugin
-  ansible.builtin.command: >
-    oc patch consoles.operator.openshift.io cluster --type=json --patch '[{"op": "add", "path": "/spec/plugins/-", "value": "'"gitops-plugin"'"}]'
-  register: plugin
-  changed_when: plugin.rc != 0
+- name: Set up Entra ID integration
+  when: integrations.entraid.add
+  block:   
+    - name: Grab the Oauth redirect url 
+      ansible.builtin.command: "az aro show -g {{ cluster.cluster_resource_group }} -n {{ cluster.name }} --query clusterProfile.domain -o tsv"
+      register: redirect_url
+    
+    - name: Set the Redirect URL full path
+      ansible.builtin.set_fact: 
+        oauth_redirect_url: "https://oauth-openshift.apps.{{ redirect_url.stdout }}.{{ cluster.location }}.aroapp.io/oauth2callback/AAD"
 
-- name: Get the list of secrets in the openshift-ingress namespace
-  ansible.builtin.command: oc get secret -n openshift-ingress -o name
-  register: secret_list_output
-  changed_when: secret_list_output.rc != 0
+    - name: Entra ID Redirect URL
+      ansible.builtin.debug:
+        msg:
+          - "Entra ID Redirect URL....................{{ oauth_redirect_url }}"
+        
+    - name: Create Entra ID IDP Secret 
+      kubernetes.core.k8s:
+        state: present
+        api_key: "{{ openshift_auth_results.openshift_auth.api_key }}"
+        username: "{{ userName.stdout }}"
+        host: "{{ apiUrl.stdout }}"
+        validate_certs: false
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: entraid-idp-auth-secret
+            namespace: openshift-config
+          data:
+            clientSecret: "{{ entraid_secret | b64encode }}"  
 
-- name: Find the secret that ends with ingress
+    - name: Create Entra ID OAUTH Integration 
+      kubernetes.core.k8s:
+        state: present
+        api_key: "{{ openshift_auth_results.openshift_auth.api_key }}"
+        username: "{{ userName.stdout }}"
+        host: "{{ apiUrl.stdout }}"
+        validate_certs: false
+        definition:
+          apiVersion: config.openshift.io/v1
+          kind: OAuth
+          metadata:
+            name: cluster
+          spec:
+            identityProviders:
+            - name: AAD
+              mappingMethod: claim
+              type: OpenID
+              openID:
+                clientID: "{{ entraid_sp }}"
+                clientSecret:
+                  name: entraid-idp-auth-secret
+                extraScopes:
+                - email
+                - profile
+                - openid
+                extraAuthorizeParameters:
+                  include_granted_scopes: "true"
+                claims:
+                  preferredUsername:
+                  - email
+                  name:
+                  - name
+                  email:
+                  - email
+                  group:
+                  - groups
+                issuer: "https://login.microsoftonline.com/{{ entraid_tenantid }}/v2.0"
+
+- name: Read Default OpenShift Ingress Secret
+  kubernetes.core.k8s_info:
+    kind: Secret
+    api_key: "{{ openshift_auth_results.openshift_auth.api_key }}"
+    username: "{{ userName.stdout }}"
+    host: "{{ apiUrl.stdout }}"
+    validate_certs: false
+    namespace: openshift-ingress
+  register: ingress_secrets
+
+- name: Find secret that ends with 'ingress'
   ansible.builtin.set_fact:
-    OCP_INGRESS_TLS_SECRET_NAME: "{{ secret_list_output.stdout_lines | select('search', 'ingress$') | list | first | regex_replace('^secret/', '') }}"
+    ingress_secret: "{{ ingress_secrets.resources | json_query('[?ends_with(metadata.name, `ingress`)]') }}"
 
-- name: Check if ingress secret was found
-  ansible.builtin.fail:
-    msg: "No secret ending with 'ingress' found in the openshift-ingress namespace."
-  when: OCP_INGRESS_TLS_SECRET_NAME is not defined
+    
 
-- name: Print the ingress secret name
+- name: Debug the found secret
   ansible.builtin.debug:
-    msg: "Ingress secret found: {{ OCP_INGRESS_TLS_SECRET_NAME }}"
-
+    msg:
+      - "Default Ingress Secret Name.......... {{ ingress_secret[0].metadata.name }}"
+      
 - name: Completion
-  ansible.builtin.debug:
-    msg: Cluster Bootstrap Completed!
+  ansible.builtin.debug:  
+    msg: Cluster Bootstrap Completed
+
 
 

@@ -39,12 +39,11 @@ virtualenv:
 	# Activate the virtual environment and install dependencies
 	@echo "Activating virtual environment and installing dependencies..."
 	source $(VIRTUALENV)/bin/activate && \
-	dnf install ansible && \
 	pip3 install --upgrade pip && \
 	pip3 install setuptools && \
+	pip3 install -r requirements.txt && \
 	pip3 install ansible-lint && \
 	pip3 install junit_xml pymongo xmljson jmespath kubernetes openshift && \
-	pip3 install -r ~/.ansible/collections/ansible_collections/azure/azcollection/requirements-azure.txt && \
 	ansible-galaxy collection install azure.azcollection && \
 	ansible-galaxy collection install community.general && \
 	ansible-galaxy collection install community.okd && \

@@ -9,7 +9,6 @@
 - name: Check Resource Group Delete status
   azure.azcollection.azure_rm_resourcegroup_info:
     name: "{{ cluster.cluster_resource_group }}"
-    # subscription_id: "{{ subscriptionId }}"
   register: delete_cluster
   until: not delete_cluster.resourcegroups | length > 0
   retries: 120
@@ -38,7 +37,7 @@
         resource_group: "{{ vnet.network_rg }}"
       register: az_net_vnet_check
 
-    - name: Delete VNET that hosts Control abd Worker subnets
+    - name: Delete VNET that hosts Control and Worker subnets
       azure.azcollection.azure_rm_virtualnetwork:
         resource_group: "{{ vnet.network_rg }}"
         name: "{{ vnet.name }}"
@@ -74,6 +73,15 @@
       until: az_net_rg.resourcegroups | length < 1
       retries: 120
       delay: 5
+
+- name: Delete Azure policy for the Cluster Resource Group
+  when: cluster.conditionals.create_azure_policy_for_tags
+  block:
+    - name: Delete Azure Policy Assignment
+      ansible.builtin.command: az policy assignment delete --name {{ cluster.policy_definition }}-{{ cluster.name }}
+
+    - name: Delete Azure Policy Definition
+      ansible.builtin.command: az policy definition delete --name {{ cluster.policy_definition }}
 
 - name: Cleanup Completion Message
   ansible.builtin.debug:

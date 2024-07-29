@@ -5,13 +5,18 @@ cluster_sp_id_key: clientId
 cluster_sp_secret_key: clientSecret
 cluster_tenant_id_key: tenantId
 cluster_subscription_id_key: subId
+cluster_sp_object_id_key: spObjectId
 pull_secret_akv_key: pullSecret
 
 
-## ARO Cluster Build Secrets
-
-
-tags: {createdBy: "test-user", createdBy2: "fran6"}
+## Cluster Tags. Max of 10 tags
+tags: 
+  - key: createdBy 
+    value: "test-user" 
+  - key: purpose
+    value: "test-cluster"
+  - key: company
+    value: redhat
 
 ## Parameters if needed to create Network Resources Values
 vnet:
@@ -38,16 +43,20 @@ cluster:
     encrypt_master_hosts: False
     encrypt_worker_hosts: False
     enable_preconfigured_nsg: False
+    create_azure_policy_for_tags: True
     enable_fips: False
+    use_aro_sp: True
   name: ansible-aro-cluster
-  cluster_resource_group:  ansible-aro-main 
+  cluster_resource_group:  ansible-aro-main   
   location: eastus
   domain: mycluster.com
+  policy_definition: aro-policy-def
   version: "4.14.16"
   control_instance: Standard_D8s_v3
   worker_disk: 128
   worker_node_count: 3
-  worker_instance: Standard_D4s_v3 
+  worker_instance: Standard_D8s_v3 #Standard_D4s_v3 
+  subscription_id: ee0bc28d-c3d4-4efa-a187-c959a251e5f2
   disk_encryption_set: ""
   network:
     vnet_name: ansible-aro-cluster-vnet
@@ -60,9 +69,18 @@ cluster:
     pod_cidr: 10.128.0.0/14
     service_cidr: 172.30.0.0/16  
 
-gitops:
-  install: true
-  version: "gitops-1.11"
+integrations:
+  gitops:
+    add: true
+    version: "gitops-1.11"
+  eso:
+    add: true
+    version: stable
+  entraid:
+    add: true
+
+installer:
+  subscription_id: ee0bc28d-c3d4-4efa-a187-c959a251e5f2
 
 
 

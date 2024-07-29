@@ -1,6 +1,6 @@
 packaging
 requests[security]
-ansible[azure] -I
+ansible[azure]
 xmltodict
 msgraph-sdk==1.0.0
 azure-cli-core==2.61.0
@@ -17,6 +17,7 @@ azure-mgmt-containerregistry==9.1.0
 azure-containerregistry==1.1.0
 azure-mgmt-containerservice==20.0.0
 azure-mgmt-datafactory==2.0.0
+azure-mgmt-datalake-store
 azure-mgmt-dns==8.0.0
 azure-mgmt-marketplaceordering==1.1.0
 azure-mgmt-monitor==3.0.0
@@ -26,6 +27,7 @@ azure-mgmt-network==19.1.0
 azure-mgmt-nspkg==2.0.0
 azure-mgmt-privatedns==1.0.0
 azure-mgmt-redis==13.0.0
+azure-mgmt-datalake-store
 azure-mgmt-resource==21.1.0
 azure-mgmt-rdbms==10.2.0b12
 azure-mgmt-search==8.0.0
