@@ -3,3 +3,4 @@ ansible/variables/common_var.yaml
 .vscode
 ansibel/.vscode/*
 ansible.cfg
+artefacts/*
